@@ -89,7 +89,7 @@ if ($doRetag) {
         $newTag = $Image
     }
     Write-Host "==> retag-tar.ps1 $Tar  $oldTag -> $newTag"
-    & (Join-Path $root 'retag-tar.ps1') -Tar $Tar -OldTag $oldTag -NewTag $newTag
+    & (Join-Path $root 'retag-tar.ps1') -Tar $Tar -OldTag $oldTag -NewTag $newTag -Engine $Engine
     if ($LASTEXITCODE -ne 0) { throw "retag-tar failed ($LASTEXITCODE)" }
 }
 

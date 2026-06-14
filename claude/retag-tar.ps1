@@ -12,12 +12,19 @@
     Source image tag inside the tar (e.g. localhost/docker.io/user/img:v1).
 .PARAMETER NewTag
     Target image tag for sbx load (e.g. docker.io/user/img:v1).
+.PARAMETER Engine
+    Container engine to run the alpine helper with (podman or docker). Default: podman.
 #>
 param(
     [Parameter(Mandatory)] [string] $Tar,
     [Parameter(Mandatory)] [string] $OldTag,
-    [Parameter(Mandatory)] [string] $NewTag
+    [Parameter(Mandatory)] [string] $NewTag,
+    [string] $Engine = 'podman'
 )
+
+if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) {
+    throw "$Engine not found on PATH"
+}
 
 $ErrorActionPreference = 'Stop'
 
@@ -51,8 +58,12 @@ mv '${name}.new' '$name'
 rm -rf _retag
 "@
 
-Write-Host "==> retag-tar: $OldTag -> $NewTag  (alpine sed, no image load)"
-podman run --rm -v "${dir}:/work" -w /work docker.io/library/alpine sh -c $script
+# Normalize to LF — a literal CR before "sh -c" makes busybox ash choke on
+# "set -e<CR>" with "illegal option -" since \r isn't whitespace to it.
+$script = $script -replace "`r`n", "`n"
+
+Write-Host "==> retag-tar: $OldTag -> $NewTag  (alpine sed, no image load, $Engine)"
+& $Engine run --rm -v "${dir}:/work" -w /work docker.io/library/alpine sh -c $script
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "retag-tar: done — $Tar"
