@@ -26,6 +26,33 @@ sbx manages OAuth + `~/.claude.json` (sessions, history, plugins, projects) — 
 
 ## Run
 
+Without sbx (Win10) — from any project directory:
+
+```powershell
+# image must already be in the engine's local store (build.ps1, or `docker load <tar>`)
+<repo>\claude\run.ps1 -Image cc-custom:v1 -Engine docker
+```
+
+Mounts the current directory as `/workspace` and launches `claude` interactively.
+First run only: type `/login` inside the container — the OAuth token persists to
+`%USERPROFILE%\.claude-docker\.credentials.json` and survives future runs.
+Session/history state persists via `%USERPROFILE%\.claude.json`.
+
+**Security:** `.claude.json` and `.claude-docker\.credentials.json` carry live
+OAuth/session tokens once populated. Treat them like SSH keys — never commit,
+never share the `.claude-docker` directory.
+
+Use from any project dir without retyping the repo path — add to your
+PowerShell profile (`$PROFILE`):
+
+```powershell
+function ccrun { & "<repo-path>\claude\run.ps1" @args }
+```
+
+Then just run `ccrun` from any project directory.
+
+Legacy sbx path (requires sbx + Win11):
+
 ```powershell
 sbx run --template docker.io/<user>/cc-custom:v1 claude
 ```
