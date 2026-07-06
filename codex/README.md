@@ -22,6 +22,12 @@ sbx manages OAuth + `auth.json` at runtime; nothing credential-related is baked 
 
 `build.ps1` defaults to `-Engine podman`. Pass `-Engine docker` to use Docker.
 
+To try the no-sbx slim image, use the alternate Dockerfile:
+
+```powershell
+./build.ps1 -Image codex-custom:slim -Dockerfile Dockerfile.slim -Engine docker
+```
+
 ## Run
 
 Without sbx (Win10) — from any project directory:

@@ -22,6 +22,7 @@ param(
     [switch]$LoadToPodman,     # after Tar export, run `podman load -i <tar>`
     [switch]$SkipPrepare,
     [switch]$NoCache,
+    [string]$Dockerfile = 'Dockerfile',
     [string]$Engine = 'podman',
     [string]$HostCodexDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.codex
     [string]$Destination  = ''    # passed through to prepare.ps1; default: <repo>/context/.codex
@@ -58,7 +59,10 @@ if (-not $SkipPrepare) {
     & (Join-Path $root 'prepare.ps1') @prepareArgs
 }
 
-$buildArgs = @('build', '-t', $Image, '-f', (Join-Path $root 'Dockerfile'))
+$dockerfilePath = if ([System.IO.Path]::IsPathRooted($Dockerfile)) { $Dockerfile } else { Join-Path $root $Dockerfile }
+if (-not (Test-Path $dockerfilePath)) { throw "Dockerfile not found: $dockerfilePath" }
+
+$buildArgs = @('build', '-t', $Image, '-f', $dockerfilePath)
 if ($NoCache) { $buildArgs += '--no-cache' }
 $buildArgs += $root
 
