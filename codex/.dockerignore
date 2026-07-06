@@ -2,8 +2,10 @@
 # context/.claude/ and context/.codex/ are populated by prepare.ps1 and ARE
 # needed in the build context. Only host-side runtime state is excluded here.
 
-# Exclude any stale tar artifacts that landed in the subdir
+# Exclude saved image artifacts that landed in the subdir
 *.tar
+codex-custom
+*-custom
 
 # Exclude editor/IDE noise
 .vscode/

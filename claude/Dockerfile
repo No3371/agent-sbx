@@ -6,7 +6,6 @@
 #   - Host .claude skills / agents / tools / commands / hooks / plugins /
 #     settings.json mapped into the sandbox (paths rewritten Win → Linux by
 #     prepare.ps1)
-#   - SessionStart hook runs `npx gitnexus analyze` on the workspace
 #
 # sbx supplies host OAuth + ~/.claude.json itself; this template does not bake
 # credentials, sessions, history, or plugin install state.
@@ -93,8 +92,7 @@ COPY --chown=agent:agent context/.claude/tools/     /home/agent/.claude/tools/
 COPY --chown=agent:agent context/.claude/commands/  /home/agent/.claude/commands/
 
 # Host settings (rewritten by prepare.ps1: Win paths → Linux paths,
-# statusLine rewritten (Win node path → bare node), gitnexus-analyze SessionStart
-# hook injected) and hooks.
+# statusLine rewritten (Win node path → bare node) and hooks.
 #
 # settings.json lands at user level; sbx rewrites it with its own auth/permissions
 # baseline at sandbox boot, clobbering the baked content. To survive that, an
@@ -115,8 +113,6 @@ COPY --chown=agent:agent context/.claude/hooks/              /home/agent/.claude
 # `enabledPlugins` is preserved by prepare.ps1 so this stays wired up.
 COPY --chown=agent:agent context/.claude/plugins/      /home/agent/.claude/plugins/
 
-# Workspace-analyze script lives in the hook payload dir alongside host hooks
-# so settings.json path references resolve uniformly.
 COPY --chown=agent:agent context/scripts/ /home/agent/.local/bin/
 
 RUN chmod +x /home/agent/.local/bin/*.sh \
@@ -134,21 +130,6 @@ USER root
 RUN printf '\n# Restore baked claude settings after sbx baseline overwrite.\nsource /home/agent/.local/bin/merge-claude-settings.sh\n' \
         >> /etc/sandbox-persistent.sh \
  && chmod 0644 /etc/sandbox-persistent.sh
-USER agent
-
-# Install gitnexus globally so it's available without an npx download at first
-# session-start. Pin version: update this when upgrading intentionally.
-#
-# Base image configures npm prefix to /usr/local/share/npm-global; that bin dir
-# is on the interactive-login PATH but NOT on minimal-exec PATH (sbx may launch
-# with a stripped env). Symlink into /usr/local/bin so the binary is findable
-# from any shell context.
-USER root
-ARG GITNEXUS_VERSION=1.6.5
-RUN npm config set update-notifier false \
- && npm install -g gitnexus@${GITNEXUS_VERSION} \
- && ln -sf /usr/local/share/npm-global/bin/gitnexus /usr/local/bin/gitnexus \
- && /usr/local/bin/gitnexus --version
 USER agent
 
 # Base image entrypoint (tini + base CMD) launches claude-code. The baked

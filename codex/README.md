@@ -3,7 +3,6 @@
 Extends `docker/sandbox-templates:codex` with:
 
 - **Node 24 LTS** (upgrades base Node 20)
-- **`gitnexus`** installed globally (no `npx` download on first use)
 - Host `~/.codex/{config.toml, AGENTS.md, skills/, vendor_imports/skills/}` mapped into the sandbox (Win paths rewritten, machine-local sections stripped)
 
 sbx manages OAuth + `auth.json` at runtime; nothing credential-related is baked into the image.
@@ -91,22 +90,6 @@ custom_sbx/codex/
 - Value contains `\` or `:` → take basename, strip `.cmd`/`.exe` → bare name on PATH
 - Value already a bare name → unchanged
 - `args` array is never touched
-
-Example:
-
-```toml
-# host
-[mcp_servers.gitnexus]
-command = "C:\\Users\\User\\AppData\\Local\\npm-cache\\_npx\\5e786f48223a616c\\node_modules\\.bin\\gitnexus.cmd"
-args = ["mcp"]
-
-# baked
-[mcp_servers.gitnexus]
-command = "gitnexus"
-args = ["mcp"]
-```
-
-The Dockerfile installs `gitnexus` globally so the bare name resolves.
 
 ## What `prepare.ps1` excludes (never staged)
 

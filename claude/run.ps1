@@ -1,18 +1,16 @@
 # Run the baked cc-custom image without sbx.
 #
 # Mounts the current directory as the container workspace and drops into
-# `claude` interactively. Persists OAuth + session state across runs by
-# bind-mounting individual host files (NOT the whole ~/.claude dir, which
-# would shadow the image's baked skills/agents/settings).
+# `claude` interactively. Reuses host OAuth + session state by bind-mounting
+# individual host files (NOT the whole ~/.claude dir, which would shadow the
+# image's baked skills/agents/settings).
 #
-# First run: inside the container run `/login` once. The OAuth token is
-# written to the mounted credentials file on the host and persists to
-# future runs. See .projex eval 2607060232 for the rationale.
+# Run `/login` on the host first. The container mounts the host credentials so
+# Claude Code keeps using the same subscription-backed OAuth account.
 #
-# SECURITY: ~/.claude.json and .claude-docker/.credentials.json carry live
-# OAuth/session tokens once populated. Treat them like SSH keys — never
-# commit, never share the .claude-docker directory (any other process/
-# container reading %USERPROFILE% can read the plaintext token).
+# SECURITY: ~/.claude.json and ~/.claude/.credentials.json carry live OAuth /
+# session tokens. Treat them like SSH keys — never commit, never share them
+# (any process/container reading %USERPROFILE% can read the plaintext token).
 
 [CmdletBinding()]
 param(
@@ -27,11 +25,10 @@ if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) {
     throw "$Engine not found on PATH"
 }
 
-# Host-side persisted state. Bind-mounted as individual files so sibling
-# baked files under /home/agent/.claude are NOT shadowed.
-$claudeJson  = Join-Path $env:USERPROFILE '.claude.json'
-$credsDir    = Join-Path $env:USERPROFILE '.claude-docker'
-$credsFile   = Join-Path $credsDir '.credentials.json'
+# Host-side persisted state. Bind-mounted as individual files so sibling baked
+# files under /home/agent/.claude are NOT shadowed.
+$claudeJson = Join-Path $env:USERPROFILE '.claude.json'
+$credsFile  = Join-Path $env:USERPROFILE '.claude\.credentials.json'
 
 # Pre-create the host files so the engine bind-mounts them as files, not as
 # freshly-created empty directories (Docker creates a dir if the source path
@@ -40,8 +37,9 @@ $credsFile   = Join-Path $credsDir '.credentials.json'
 # first real write.
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 if (-not (Test-Path $claudeJson)) { [System.IO.File]::WriteAllText($claudeJson, '{}', $utf8NoBom) }
-if (-not (Test-Path $credsDir))   { New-Item -ItemType Directory -Force $credsDir | Out-Null }
-if (-not (Test-Path $credsFile))  { [System.IO.File]::WriteAllText($credsFile, '{}', $utf8NoBom) }
+if (-not (Test-Path $credsFile)) {
+    throw "Host Claude OAuth credentials not found: $credsFile. Run Claude Code on the host and complete /login first."
+}
 
 $runArgs = @(
     'run', '-it', '--rm',

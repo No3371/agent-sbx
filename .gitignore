@@ -3,8 +3,12 @@
 claude/context/.claude/
 codex/context/.codex/
 
-# Build artifacts — tars produced by build.ps1 -Tar; not part of the repo.
+# Build artifacts produced by build.ps1; not part of the repo.
 *.tar
+claude/cc-custom
+claude/*-custom
+codex/codex-custom
+codex/*-custom
 .probe
 .claude
 .projex

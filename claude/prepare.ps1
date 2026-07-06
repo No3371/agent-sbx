@@ -18,7 +18,6 @@
 #   - project .mcp.json: merged from repo root (one level up from this script),
 #             command paths rewritten — covers project-level MCP installs like
 #             context-mode. Project entries win over global on name collision.
-#   - Injects: SessionStart gitnexus-analyze hook (always, at end).
 
 [CmdletBinding()]
 param(
@@ -77,13 +76,14 @@ foreach ($name in $dirs) {
     }
 }
 
-# Strip .github/ dirs that may exist inside plugin/skill source trees.
-# These carry upstream CODEOWNERS, dependabot.yml, and issue templates that
-# have no place in a baked image and should not be redistributed.
-$githubDirs = Get-ChildItem -Path $Destination -Recurse -Force -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq '.github' }
-foreach ($g in $githubDirs) {
-    Write-Host "[prepare] removing .github dir from staged context: $($g.FullName)"
+# Strip .git/ and .github/ dirs that may exist inside plugin/skill source
+# trees (e.g. git-cloned skills). .git/ carries repo history/remotes that has
+# no place in a baked image; .github/ carries upstream CODEOWNERS,
+# dependabot.yml, and issue templates that should not be redistributed.
+$vcsDirs = Get-ChildItem -Path $Destination -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq '.github' -or $_.Name -eq '.git' }
+foreach ($g in $vcsDirs) {
+    Write-Host "[prepare] removing $($g.Name) dir from staged context: $($g.FullName)"
     Remove-Item $g.FullName -Recurse -Force
 }
 
@@ -272,6 +272,16 @@ function Test-HookCommandAllowed([string]$cmd) {
                     }
                 }
             }
+            if ($prefix -eq '/home/agent/.local/bin/') {
+                if ($cmd -match '/home/agent/\.local/bin/([^"'' ]+)') {
+                    $relPath = $Matches[1]
+                    $stagedPath = Join-Path $PSScriptRoot "context/scripts/$relPath"
+                    if (-not (Test-Path $stagedPath)) {
+                        Write-Host "[prepare] settings: dropped hook referencing unstaged script: $relPath"
+                        return $false
+                    }
+                }
+            }
             return $true
         }
     }
@@ -327,26 +337,6 @@ if ($settings.PSObject.Properties['hooks']) {
     }
     $settings.hooks = $filteredHooks
 }
-
-# Inject SessionStart gitnexus-analyze hook (always at end of SessionStart list).
-$analyzeEntry = [pscustomobject]@{
-    hooks = @(
-        [pscustomobject]@{
-            type           = 'command'
-            command        = '/home/agent/.local/bin/gitnexus-analyze.sh'
-            timeout        = 300
-            statusMessage  = 'Running gitnexus analyze on workspace...'
-        }
-    )
-}
-
-if (-not $settings.PSObject.Properties['hooks']) {
-    $settings | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{})
-}
-if (-not $settings.hooks.PSObject.Properties['SessionStart']) {
-    $settings.hooks | Add-Member -NotePropertyName SessionStart -NotePropertyValue @()
-}
-$settings.hooks.SessionStart = @($settings.hooks.SessionStart) + $analyzeEntry
 
 # --- mcpServers: rewrite host paths so server commands resolve in the sandbox ---
 if ($settings.PSObject.Properties['mcpServers']) {

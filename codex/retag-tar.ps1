@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-    Re-tag an image inside a tar archive (for sbx template load).
+    Re-tag an image inside a tar archive.
 .DESCRIPTION
     Rewrites the tag strings inside manifest.json (and repositories) of a
     docker-archive tar without loading the image into the local container store.
     Uses a transient alpine container for the tar/sed operations.
-    Used by build.ps1 -Retag / -LoadToSbx.
+    Used by build.ps1 -Retag.
 .PARAMETER Tar
     Path to the image tar file (produced by build.ps1 -Tar).
 .PARAMETER OldTag
     Source image tag inside the tar (e.g. localhost/docker.io/user/img:v1).
 .PARAMETER NewTag
-    Target image tag for sbx load (e.g. docker.io/user/img:v1).
+    Target image tag (e.g. docker.io/user/img:v1).
 .PARAMETER Engine
     Container engine to run the alpine helper with (podman or docker). Default: podman.
 #>

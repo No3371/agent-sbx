@@ -1,7 +1,6 @@
 # Custom Codex CLI sandbox template
 #   - Node 24 LTS (upgrades base Node 20)
 #   - @openai/codex pre-installed in base
-#   - gitnexus installed globally
 #   - Host ~/.codex/{config.toml,AGENTS.md,skills/,vendor_imports/skills/}
 #     staged by prepare.ps1 (Win paths rewritten, Win/marketplace/project sections stripped)
 #
@@ -34,12 +33,6 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*; \
     node --version | grep -E "^v24\." \
         || { echo "ERROR: expected Node 24, got $(node --version)"; exit 1; }
-
-ARG GITNEXUS_VERSION=1.6.5
-RUN npm config set update-notifier false \
- && npm install -g gitnexus@${GITNEXUS_VERSION} \
- && ln -sf /usr/local/share/npm-global/bin/gitnexus /usr/local/bin/gitnexus \
- && /usr/local/bin/gitnexus --version
 
 USER agent
 WORKDIR /home/agent

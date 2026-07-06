@@ -76,7 +76,7 @@ if (Test-Path $skillsSrc) {
     Write-Host "[prepare] no skills dir on host"
 }
 
-# --- vendor_imports/skills/: stage with ALL .git/ dirs (any depth) excluded ---
+# --- vendor_imports/skills/: staged as-is; .git/ purged in the general pass below ---
 $vendorDst = Join-Path $Destination 'vendor_imports\skills'
 New-Item -ItemType Directory -Path $vendorDst -Force | Out-Null
 Set-Content -Path (Join-Path $vendorDst '.keep') -Value '' -Encoding UTF8
@@ -85,17 +85,9 @@ $vendorSrc = Join-Path $HostCodexDir 'vendor_imports\skills'
 if (Test-Path $vendorSrc) {
     $topEntries = Get-ChildItem -Path $vendorSrc -Force -ErrorAction SilentlyContinue
     if ($topEntries) {
-        Write-Host "[prepare] mapping vendor_imports/skills ($($topEntries.Count) entries; excluding .git/ recursively)"
+        Write-Host "[prepare] mapping vendor_imports/skills ($($topEntries.Count) entries)"
         foreach ($e in $topEntries) {
             Copy-Item -Path $e.FullName -Destination $vendorDst -Recurse -Force
-        }
-        # Recursive .git/ purge — Copy-Item -Exclude only matches top-level names,
-        # so curated skill dirs that were git-cloned will still carry .git/ subtrees.
-        $gitDirs = Get-ChildItem -Path $vendorDst -Recurse -Force -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq '.git' }
-        foreach ($g in $gitDirs) {
-            Write-Host "[prepare] removing nested .git: $($g.FullName)"
-            Remove-Item $g.FullName -Recurse -Force
         }
     } else {
         Write-Host "[prepare] vendor_imports/skills on host is empty"
@@ -104,13 +96,15 @@ if (Test-Path $vendorSrc) {
     Write-Host "[prepare] no vendor_imports/skills dir on host"
 }
 
-# Strip .github/ dirs from all staged content (skills/, vendor_imports/).
-# Plugin/skill source trees may include upstream .github/ metadata that has
-# no place in a baked image.
-$githubDirs = Get-ChildItem -Path $Destination -Recurse -Force -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq '.github' }
-foreach ($g in $githubDirs) {
-    Write-Host "[prepare] removing .github dir from staged context: $($g.FullName)"
+# Strip .git/ and .github/ dirs from all staged content (skills/,
+# vendor_imports/). Copy-Item -Exclude only matches top-level names, so
+# git-cloned skill dirs still carry nested .git/ subtrees; .github/ carries
+# upstream CODEOWNERS/dependabot/issue templates. Neither belongs in a baked
+# image.
+$vcsDirs = Get-ChildItem -Path $Destination -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq '.github' -or $_.Name -eq '.git' }
+foreach ($g in $vcsDirs) {
+    Write-Host "[prepare] removing $($g.Name) dir from staged context: $($g.FullName)"
     Remove-Item $g.FullName -Recurse -Force
 }
 

@@ -9,15 +9,6 @@ installs are responsible for verifying the licenses of that additional content.
 
 ---
 
-## gitnexus
-
-- **Version:** 1.6.5 (pinned in both Dockerfiles via `GITNEXUS_VERSION`)
-- **License:** PolyForm Noncommercial 1.0.0
-- **Source:** https://www.npmjs.com/package/gitnexus
-- **Note:** PolyForm Noncommercial prohibits commercial use. Use of built images
-  in commercial products or services requires a separate commercial license from
-  the gitnexus maintainer.
-
 ## claude-hud
 
 - **Version:** latest at build time (installed as a Claude Code plugin)

@@ -1,17 +1,14 @@
 # Build the custom Codex CLI sandbox template with podman.
 #
 # Output modes (pick one):
-#   default     — image stays in local podman store only (not usable by sbx)
-#   -Tar <path> — also export to a tar; load into sbx with `sbx template load <tar>`
-#                 Add -Retag to strip the `localhost/` prefix so the tar is
-#                 drop-in for sbx without a manual retag-tar.ps1 step.
-#   -Push       — push to a registry (sbx pulls from there)
+#   default          — image stays in the selected engine's local store only
+#   -Tar <path>      — also export to a tar
+#   -LoadToDocker    — load the exported tar into Docker (requires -Tar)
+#   -LoadToPodman    — load the exported tar into Podman (requires -Tar)
+#   -Push            — push to a registry
 #
-# sbx note: the sandbox runtime does NOT share your local podman/docker image
-# store. To use a freshly built template you must EITHER push to a registry OR
-# export to tar and `sbx template load` it. Also: podman save always emits
-# `localhost/<image>:<tag>` in the manifest; sbx parses `localhost/` as a
-# registry hostname and fails. -Retag (or -LoadToSbx) rewrites the manifest.
+# podman save may emit `localhost/<image>:<tag>` in the manifest for bare image
+# names. Use -Retag if you need to strip that prefix before loading elsewhere.
 
 [CmdletBinding()]
 param(
@@ -21,7 +18,8 @@ param(
     [string]$Tar,              # optional path to export tar (e.g. .\cc-custom.tar)
     [switch]$Push,
     [switch]$Retag,            # after Tar export, rewrite localhost/-prefixed manifest tags
-    [switch]$LoadToSbx,        # after Tar export, run `sbx template load` (implies -Retag)
+    [switch]$LoadToDocker,     # after Tar export, run `docker load -i <tar>`
+    [switch]$LoadToPodman,     # after Tar export, run `podman load -i <tar>`
     [switch]$SkipPrepare,
     [switch]$NoCache,
     [string]$Engine = 'podman',
@@ -36,9 +34,14 @@ $root = $PSScriptRoot
 if ($Image -match '<user>') {
     throw "Replace <user> in -Image with your registry username (e.g. docker.io/yourname/cc-custom:v1)."
 }
+$loadTargets = @()
+if ($LoadToDocker) { $loadTargets += 'docker' }
+if ($LoadToPodman) { $loadTargets += 'podman' }
+if ($loadTargets.Count -gt 0 -and -not $Tar) { throw "-LoadToDocker/-LoadToPodman requires -Tar <path>" }
+
 # Single-quote guard only matters when retag-tar.ps1 will be invoked.
 # (retag-tar.ps1 embeds the tar path in a sh heredoc — single-quote injection risk)
-$doRetag = $Retag -or $LoadToSbx
+$doRetag = $Retag
 if ($doRetag -and $Tar -and $Tar -match "'") {
     throw "-Tar path must not contain a single quote — path injection risk in retag-tar.ps1 shell script."
 }
@@ -75,12 +78,9 @@ if ($Push) {
     if ($LASTEXITCODE -ne 0) { throw "$Engine push failed ($LASTEXITCODE)" }
 }
 
-# Retag the tar's manifest so sbx doesn't interpret `localhost/` as a registry.
-# Fires when -Retag is explicit OR -LoadToSbx is set (load needs a clean tag).
-# podman save normalizes tags to `localhost/<image>:<tag>` even when the user
-# passed a bare name, so retag is always needed for the sbx tar workflow.
+# Retag the tar's manifest when explicitly requested.
 if ($doRetag) {
-    if (-not $Tar) { throw "-Retag/-LoadToSbx requires -Tar <path>" }
+    if (-not $Tar) { throw "-Retag requires -Tar <path>" }
     if ($Image -like 'localhost/*') {
         $oldTag = $Image
         $newTag = $Image -replace '^localhost/', ''
@@ -93,27 +93,25 @@ if ($doRetag) {
     if ($LASTEXITCODE -ne 0) { throw "retag-tar failed ($LASTEXITCODE)" }
 }
 
-if ($LoadToSbx) {
-    if (-not (Get-Command sbx -ErrorAction SilentlyContinue)) { throw "sbx not on PATH" }
-    Write-Host "==> sbx template load $Tar"
-    & sbx template load $Tar
-    if ($LASTEXITCODE -ne 0) { throw "sbx template load failed ($LASTEXITCODE)" }
+foreach ($target in $loadTargets) {
+    if (-not (Get-Command $target -ErrorAction SilentlyContinue)) { throw "$target not found on PATH" }
+    Write-Host "==> $target load -i $Tar"
+    & $target load -i $Tar
+    if ($LASTEXITCODE -ne 0) { throw "$target load failed ($LASTEXITCODE)" }
 }
 
 Write-Host ""
 Write-Host "Built: $Image"
 if ($Tar)     { Write-Host "Tar:   $Tar" }
 if ($doRetag) { Write-Host "Retag: $oldTag -> $newTag" }
-if ($LoadToSbx) {
-    Write-Host "Loaded into sbx. Run: sbx run -t $newTag codex"
-} elseif ($doRetag) {
-    Write-Host "Next:  sbx template load $Tar  &&  sbx run -t $newTag codex"
+if ($loadTargets.Count -gt 0) {
+    Write-Host "Loaded into: $($loadTargets -join ', ')"
+    Write-Host "Run:   ./run.ps1 -Image $Image -Engine <docker|podman>"
 } elseif ($Tar) {
-    Write-Host "Next:  ./retag-tar.ps1 -Tar $Tar -NewTag <bare-tag>  &&  sbx template load $Tar"
-    Write-Host "       (or re-run build with -Retag to bake the retag into this command.)"
+    Write-Host "Next:  docker load -i $Tar  OR  podman load -i $Tar"
 } elseif ($Push) {
-    Write-Host "Use:   sbx run --template $Image codex"
+    Write-Host "Pushed: $Image"
 } else {
-    Write-Host "Note:  image is only in $Engine's local store; sbx can't pull it."
-    Write-Host "       Re-run with -Tar <path> [-Retag|-LoadToSbx] or -Push."
+    Write-Host "Note:  image is only in $Engine's local store."
+    Write-Host "       Re-run with -Tar <path> [-LoadToDocker|-LoadToPodman] or -Push."
 }
