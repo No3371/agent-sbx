@@ -1,0 +1,15 @@
+# .dockerignore — exclude local-state dirs and build artifacts from build context.
+
+# Exclude saved image artifacts that landed in the subdir
+*.tar
+opencode-custom
+*-custom
+
+# Exclude editor/IDE noise
+.vscode/
+.idea/
+*.swp
+*~
+
+# Exclude git metadata (not needed in image layers)
+.git/

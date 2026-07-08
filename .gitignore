@@ -2,6 +2,7 @@
 # NEVER commit these. Personal plugin cache, hooks, and settings live here.
 claude/context/.claude/
 codex/context/.codex/
+opencode/context/.config/
 
 # Build artifacts produced by build.ps1; not part of the repo.
 *.tar
@@ -9,6 +10,8 @@ claude/cc-custom
 claude/*-custom
 codex/codex-custom
 codex/*-custom
+opencode/opencode-custom
+opencode/*-custom
 .probe
 .claude
 .projex
