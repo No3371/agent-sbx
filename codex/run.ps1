@@ -1,17 +1,13 @@
 # Run the baked codex-custom image without sbx.
 #
 # Mounts the current directory as the container workspace and drops into
-# `codex` interactively. Persists OAuth by bind-mounting the single host
-# auth file (NOT the whole ~/.codex dir, which would shadow the baked
-# config.toml / skills / vendor_imports).
-#
-# First run: authenticate once inside the container; the token lands in the
-# mounted auth.json on the host and persists. See .projex eval 2607060232.
-#
-# SECURITY: .codex-docker/auth.json carries a live OAuth token once
-# populated. Treat it like an SSH key — never commit, never share the
-# .codex-docker directory (any other process/container reading
-# %USERPROFILE% can read the plaintext token).
+# `codex` interactively. No host auth.json bind-mount: a partially-written
+# auth.json (e.g. a `{}` placeholder, or a file whose device-auth tokens
+# lack a ChatGPT plan type) makes `codex login status` report success while
+# the TUI's `account/read` bootstrap still hard-errors ("plan type is
+# required for chatgpt authentication"). Since device-auth login is required
+# either way, just do it fresh each run inside the ephemeral container. See
+# .projex eval 2607060232.
 
 [CmdletBinding()]
 param(
@@ -26,28 +22,25 @@ if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) {
     throw "$Engine not found on PATH"
 }
 
-# Host-side persisted auth, bind-mounted as a single file so the baked
-# ~/.codex contents are not shadowed.
-$codexDir  = Join-Path $env:USERPROFILE '.codex-docker'
-$authFile  = Join-Path $codexDir 'auth.json'
-
-# BOM-less write: PS5.1's `Set-Content -Encoding utf8` prefixes a UTF-8 BOM,
-# which can make a strict JSON parser choke on `{}` before the first real
-# write.
-if (-not (Test-Path $codexDir))  { New-Item -ItemType Directory -Force $codexDir | Out-Null }
-if (-not (Test-Path $authFile))  {
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($authFile, '{}', $utf8NoBom)
-}
-
 $runArgs = @(
     'run', '-it', '--rm',
     '-v', ("{0}:/workspace" -f $Workspace),
-    '-w', '/workspace',
-    '-v', ("{0}:/home/agent/.codex/auth.json" -f $authFile)
+    '-w', '/workspace'
 )
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
-$runArgs += @($Image, 'codex')
+
+# codegraph install wires the MCP server into ~/.codex/config.toml; codegraph
+# init builds the /workspace graph on first run (guarded by .codegraph/ so it
+# doesn't re-index every launch — auto-sync keeps it fresh after that).
+# `;` not `&&`: a codegraph hiccup (e.g. no network) must not block codex.
+#
+# --device-auth (URL + one-time code) instead of the default browser flow,
+# which starts a callback server on localhost:1455 inside the container that
+# the host browser can't reach without publishing that port.
+$bootstrap = "codegraph install --yes --target=codex --location=global; " +
+             "test -d .codegraph || codegraph init; " +
+             "codex login --device-auth; exec codex --dangerously-bypass-approvals-and-sandbox"
+$runArgs += @($Image, 'sh', '-lc', $bootstrap)
 
 Write-Host "==> $Engine $($runArgs -join ' ')"
 & $Engine @runArgs

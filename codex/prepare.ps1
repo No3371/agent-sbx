@@ -1,8 +1,10 @@
 # Stages host ~/.codex payload into ./context/.codex for the podman build.
-# Maps: config.toml (rewritten + filtered), AGENTS.md, skills/, vendor_imports/skills/.
+# Maps: config.toml (rewritten + filtered), AGENTS.md, skills/,
+#       vendor_imports/skills/, plugins/cache/ (installed plugin bundles).
 # Excludes: auth.json, sessions, sqlite state, caches, sandbox dirs, memories,
-#           machine-local marker/state files — sbx manages auth, the rest is
-#           host-only runtime state that has no business in a template image.
+#           machine-local marker/state files, plugins/data/ and plugin
+#           staging dirs — sbx manages auth, the rest is host-only runtime
+#           state that has no business in a template image.
 #
 # config.toml rewriting rules (applied before writing to context):
 #   - Drops: [windows] (Windows Sandbox config, meaningless in Linux container)
@@ -46,14 +48,46 @@ function Write-LinesNoBom([string]$path, [string[]]$lines) {
 }
 
 # Filename patterns that must never be baked into the image, regardless of
-# directory. Applied as a post-copy scan over the entire $Destination tree —
-# the host exclude list already covers known credential paths but deep nesting
-# inside skills/ or vendor_imports/ could still surface secrets.
+# directory.
 $credentialExcludePatterns = @(
     'auth.json', 'token.json', 'secrets.json',
     '*.key', '*.pem', '*.token', '*.credentials',
     '*.p12', '*.pfx'
 )
+$excludedDirectoryNames = @('.github', '.git', 'node_modules')
+
+function Test-CredentialFileName([string]$name) {
+    foreach ($pat in $credentialExcludePatterns) {
+        if ($name -like $pat) { return $true }
+    }
+    return $false
+}
+
+function Copy-ItemFiltered([string]$sourcePath, [string]$destinationDir) {
+    $item = Get-Item -LiteralPath $sourcePath -Force
+
+    if ($item.PSIsContainer) {
+        if ($excludedDirectoryNames -contains $item.Name) {
+            Write-Host "[prepare] skipping excluded dir: $($item.FullName)"
+            return
+        }
+
+        $target = Join-Path $destinationDir $item.Name
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        $children = Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+        foreach ($child in $children) {
+            Copy-ItemFiltered $child.FullName $target
+        }
+        return
+    }
+
+    if (Test-CredentialFileName $item.Name) {
+        Write-Warning "[prepare] CREDENTIAL RISK: skipping $($item.FullName)"
+        return
+    }
+
+    Copy-Item -LiteralPath $item.FullName -Destination $destinationDir -Force
+}
 
 # --- skills/: stage with .system/ excluded, seed .keep placeholder ---
 $skillsDst = Join-Path $Destination 'skills'
@@ -67,7 +101,7 @@ if (Test-Path $skillsSrc) {
     if ($entries) {
         Write-Host "[prepare] mapping skills ($($entries.Count) entries; excluding .system/)"
         foreach ($e in $entries) {
-            Copy-Item -Path $e.FullName -Destination $skillsDst -Recurse -Force
+            Copy-ItemFiltered $e.FullName $skillsDst
         }
     } else {
         Write-Host "[prepare] skills on host is empty (after .system/ exclusion)"
@@ -76,7 +110,7 @@ if (Test-Path $skillsSrc) {
     Write-Host "[prepare] no skills dir on host"
 }
 
-# --- vendor_imports/skills/: staged as-is; .git/ purged in the general pass below ---
+# --- vendor_imports/skills/: staged with recursive excludes ---
 $vendorDst = Join-Path $Destination 'vendor_imports\skills'
 New-Item -ItemType Directory -Path $vendorDst -Force | Out-Null
 Set-Content -Path (Join-Path $vendorDst '.keep') -Value '' -Encoding UTF8
@@ -87,7 +121,7 @@ if (Test-Path $vendorSrc) {
     if ($topEntries) {
         Write-Host "[prepare] mapping vendor_imports/skills ($($topEntries.Count) entries)"
         foreach ($e in $topEntries) {
-            Copy-Item -Path $e.FullName -Destination $vendorDst -Recurse -Force
+            Copy-ItemFiltered $e.FullName $vendorDst
         }
     } else {
         Write-Host "[prepare] vendor_imports/skills on host is empty"
@@ -96,16 +130,40 @@ if (Test-Path $vendorSrc) {
     Write-Host "[prepare] no vendor_imports/skills dir on host"
 }
 
-# Strip .git/ and .github/ dirs from all staged content (skills/,
-# vendor_imports/). Copy-Item -Exclude only matches top-level names, so
-# git-cloned skill dirs still carry nested .git/ subtrees; .github/ carries
-# upstream CODEOWNERS/dependabot/issue templates. Neither belongs in a baked
-# image.
-$vcsDirs = Get-ChildItem -Path $Destination -Recurse -Force -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq '.github' -or $_.Name -eq '.git' }
-foreach ($g in $vcsDirs) {
-    Write-Host "[prepare] removing $($g.Name) dir from staged context: $($g.FullName)"
-    Remove-Item $g.FullName -Recurse -Force
+# --- plugins/cache/: installed plugin bundles (context-mode, ponytail, bundled
+# browser/chrome, etc.), staged with recursive excludes. Only cache/ is staged — plugins/data/,
+# .plugin-appserver/, .marketplace-plugin-source-staging/, and
+# .remote-plugin-install-staging/ are machine-local runtime/staging state with
+# no place in a baked image (same rationale as excluding sessions/sqlite
+# above).
+$pluginsCacheDst = Join-Path $Destination 'plugins\cache'
+New-Item -ItemType Directory -Path $pluginsCacheDst -Force | Out-Null
+Set-Content -Path (Join-Path $pluginsCacheDst '.keep') -Value '' -Encoding UTF8
+
+$pluginsCacheSrc = Join-Path $HostCodexDir 'plugins\cache'
+if (Test-Path $pluginsCacheSrc) {
+    $topEntries = Get-ChildItem -Path $pluginsCacheSrc -Force -ErrorAction SilentlyContinue
+    if ($topEntries) {
+        Write-Host "[prepare] mapping plugins/cache ($($topEntries.Count) entries)"
+        foreach ($e in $topEntries) {
+            Copy-ItemFiltered $e.FullName $pluginsCacheDst
+        }
+    } else {
+        Write-Host "[prepare] plugins/cache on host is empty"
+    }
+} else {
+    Write-Host "[prepare] no plugins/cache dir on host"
+}
+
+# Host .sh files may carry CRLF line endings (authored on Windows) — bash
+# rejects a `\r` in the shebang line outright. Normalize before baking.
+$shFiles = Get-ChildItem -Path $Destination -Recurse -Force -Filter '*.sh' -ErrorAction SilentlyContinue
+foreach ($f in $shFiles) {
+    $content = [System.IO.File]::ReadAllText($f.FullName)
+    if ($content.Contains("`r`n")) {
+        Write-TextNoBom $f.FullName ($content -replace "`r`n", "`n")
+        Write-Host "[prepare] normalized CRLF -> LF: $($f.FullName.Substring($Destination.Length))"
+    }
 }
 
 # --- AGENTS.md: stage as-is, or create empty stub if absent ---
@@ -182,6 +240,7 @@ $outLines        = New-Object System.Collections.Generic.List[string]
 $currentSection  = ''  # lowercase, dequoted
 $skipSection     = $false
 $pendingBlank    = $false  # emit blank line before next kept section header
+$keptPluginMarketplaces = New-Object 'System.Collections.Generic.HashSet[string]'
 
 foreach ($lineRaw in $rawLines) {
     $line = $lineRaw
@@ -214,6 +273,8 @@ foreach ($lineRaw in $rawLines) {
                 $mkt = $tail.Substring($at + 1)
                 if ($droppedPluginMarketplaces -contains $mkt) {
                     $skipSection = $true
+                } else {
+                    [void]$keptPluginMarketplaces.Add($mkt)
                 }
             }
         }
@@ -246,6 +307,79 @@ foreach ($lineRaw in $rawLines) {
 # Trim trailing blank lines for tidy output.
 while ($outLines.Count -gt 0 -and $outLines[$outLines.Count - 1] -eq '') {
     $outLines.RemoveAt($outLines.Count - 1)
+}
+
+# Codex's `/plugins` and `codex plugin list` do not consider a copied
+# plugins/cache tree installed unless the plugin's marketplace can also be
+# resolved. Host marketplace sections are intentionally dropped above because
+# their sources often point at machine-local `.tmp/` clones, so synthesize
+# image-local marketplace mappings for every kept [plugins."name@marketplace"]
+# section that has staged cache content.
+$imageCodexHome = '/home/agent/.codex'
+$marketplaceSections = New-Object System.Collections.Generic.List[string]
+foreach ($marketplace in @($keptPluginMarketplaces)) {
+    # Browser/chrome bundled plugins are app-runtime payloads and are large
+    # enough to make `codex plugin list` sluggish when exposed as a normal
+    # local marketplace in this plain Docker variant.
+    if ($marketplace -eq 'openai-bundled') { continue }
+
+    $marketCache = Join-Path $pluginsCacheDst $marketplace
+    if (-not (Test-Path $marketCache)) { continue }
+
+    # Generate a local marketplace under plugins/cache/<marketplace> that
+    # points at already-staged versioned plugin directories. Some upstream
+    # manifests advertise Git/URL sources, which makes `codex plugin list`
+    # slow or network-dependent even though the cache is already baked.
+    $agentsPluginsDir = Join-Path $marketCache '.agents\plugins'
+    New-Item -ItemType Directory -Path $agentsPluginsDir -Force | Out-Null
+
+    $pluginEntries = New-Object System.Collections.Generic.List[object]
+    $pluginDirs = Get-ChildItem -LiteralPath $marketCache -Directory -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne '.agents' }
+    foreach ($pluginDir in $pluginDirs) {
+        $versionDirs = Get-ChildItem -LiteralPath $pluginDir.FullName -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName '.codex-plugin\plugin.json') } |
+            Sort-Object Name -Descending
+        $versionDir = @($versionDirs)[0]
+        if (-not $versionDir) { continue }
+
+        $pluginEntries.Add([ordered]@{
+            name = $pluginDir.Name
+            source = [ordered]@{
+                source = 'local'
+                path = "./$($pluginDir.Name)/$($versionDir.Name)"
+            }
+            policy = [ordered]@{
+                installation = 'AVAILABLE'
+                authentication = 'ON_INSTALL'
+            }
+            category = 'Productivity'
+        }) | Out-Null
+    }
+
+    if ($pluginEntries.Count -eq 0) { continue }
+
+    $marketplaceJson = [ordered]@{
+        name = $marketplace
+        interface = [ordered]@{
+            displayName = $marketplace
+        }
+        plugins = $pluginEntries
+    } | ConvertTo-Json -Depth 10
+    Write-TextNoBom (Join-Path $agentsPluginsDir 'marketplace.json') $marketplaceJson
+
+    $relRoot = $marketCache.Substring($Destination.Length).TrimStart('\','/') -replace '\\','/'
+    $source = "$imageCodexHome/$relRoot"
+
+    $marketplaceSections.Add("") | Out-Null
+    $marketplaceSections.Add("[marketplaces.$marketplace]") | Out-Null
+    $marketplaceSections.Add('last_updated = "1970-01-01T00:00:00Z"') | Out-Null
+    $marketplaceSections.Add('source_type = "local"') | Out-Null
+    $marketplaceSections.Add("source = `"$source`"") | Out-Null
+}
+
+foreach ($line in $marketplaceSections) {
+    $outLines.Add($line) | Out-Null
 }
 
 $configDst = Join-Path $Destination 'config.toml'

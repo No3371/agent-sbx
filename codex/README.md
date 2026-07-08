@@ -3,7 +3,7 @@
 Extends `docker/sandbox-templates:codex` with:
 
 - **Node 24 LTS** (upgrades base Node 20)
-- Host `~/.codex/{config.toml, AGENTS.md, skills/, vendor_imports/skills/}` mapped into the sandbox (Win paths rewritten, machine-local sections stripped)
+- Host `~/.codex/{config.toml, AGENTS.md, skills/, vendor_imports/skills/, plugins/cache/}` mapped into the sandbox (Win paths rewritten, machine-local sections stripped)
 
 sbx manages OAuth + `auth.json` at runtime; nothing credential-related is baked into the image.
 
@@ -37,7 +37,7 @@ Without sbx (Win10) — from any project directory:
 <repo>\codex\run.ps1 -Image codex-custom:v1 -Engine docker
 ```
 
-Mounts the current directory as `/workspace` and launches `codex` interactively.
+Mounts the current directory as `/workspace` and launches `codex --dangerously-bypass-approvals-and-sandbox` interactively.
 First run only: authenticate inside the container — the token persists to
 `%USERPROFILE%\.codex-docker\auth.json` and survives future runs.
 
@@ -57,7 +57,7 @@ Then just run `codexrun` from any project directory.
 Legacy sbx path (requires sbx + Win11):
 
 ```powershell
-sbx run --template docker.io/<user>/codex-custom:v1 codex
+sbx run --template docker.io/<user>/codex-custom:v1 codex --dangerously-bypass-approvals-and-sandbox
 ```
 
 ## Layout
@@ -74,7 +74,8 @@ custom_sbx/codex/
     │   ├── config.toml               # rewritten: marketplaces/projects/windows dropped
     │   ├── AGENTS.md                 # copied as-is (empty stub if absent on host)
     │   ├── skills/                   # user skills (excluding .system/)
-    │   └── vendor_imports/skills/    # vendored curated skills (excluding all .git/)
+    │   ├── vendor_imports/skills/    # vendored curated skills (excluding all .git/)
+    │   └── plugins/cache/            # installed plugin bundles (excluding node_modules/)
     └── scripts/                      # reserved (no codex hooks shipped)
 ```
 
@@ -88,8 +89,15 @@ custom_sbx/codex/
 | `[mcp_servers.*]` | Keep, with `command` rewritten Win path → bare binary name |
 | `[windows]` | Drop (Windows Sandbox config — no meaning in Linux container) |
 | `[projects.*]` | Drop (machine-local trust entries) |
-| `[marketplaces.*]` | Drop ALL (Codex re-registers at runtime; baking local-source marketplaces is broken because `.tmp/` isn't staged) |
+| `[marketplaces.*]` | Drop host entries, then synthesize image-local entries for staged non-bundled plugin cache marketplaces |
 | `[plugins."*@openai-primary-runtime"]` | Drop (their marketplace was dropped — would dangle) |
+
+For installed non-bundled plugins such as `context-mode@context-mode` and
+`ponytail@ponytail`, `prepare.ps1` writes a local marketplace manifest under
+`plugins/cache/<marketplace>/.agents/plugins/marketplace.json` and adds a
+matching `[marketplaces.<marketplace>]` section. Without that mapping,
+`/plugins` reports zero installed plugins even when the cache directories are
+baked into the image.
 
 ### MCP `command` rewriting
 
@@ -104,12 +112,13 @@ custom_sbx/codex/
 - `cache/`, `.tmp/`, `.sandbox/`, `.sandbox-bin/`, `.sandbox-secrets/` — host-only runtime dirs
 - `memories/`, `.codex-global-state.json*`, `models_cache.json`, `installation_id`, `cap_sid`, `.personality_migration` — machine-local state
 - `skills/.system/` — internal system skills, not user content
-- `**/.git/` inside `vendor_imports/skills/` — recursive, any depth
-- Post-copy scan removes anything matching credential patterns (`*.key`, `*.pem`, `*.token`, `*.credentials`, `secrets.json`, `*.p12`, `*.pfx`, `token.json`, `auth.json`)
+- `plugins/data/` and plugin staging dirs — host runtime state
+- `**/.git/`, `**/.github/`, and `**/node_modules/` inside staged skills/vendor/plugins content — recursive, any depth
+- Recursive copy skips anything matching credential patterns (`*.key`, `*.pem`, `*.token`, `*.credentials`, `secrets.json`, `*.p12`, `*.pfx`, `token.json`, `auth.json`); a final scan removes any unexpected matches
 
 ## Notes
 
-- `skills/` and `vendor_imports/skills/` are seeded with a `.keep` placeholder so BuildKit `COPY` succeeds even when the host dirs are empty or absent.
+- `skills/`, `vendor_imports/skills/`, and `plugins/cache/` are seeded with a `.keep` placeholder so BuildKit `COPY` succeeds even when the host dirs are empty or absent.
 - If `AGENTS.md` is absent on the host, an empty stub is written so the Dockerfile `COPY` never fails.
 - `$Destination` is recreated clean on each `prepare.ps1` run — there is no incremental staging.
 - `.projex/closed/` contains completed project documents (design plans, walkthroughs).

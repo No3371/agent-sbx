@@ -12,6 +12,9 @@ FROM docker/sandbox-templates:codex
 USER root
 
 ARG NODE_MAJOR=24
+# Pinned, not @latest — a shared build artifact should track an audited
+# version explicitly (see .projex/2607081900-codegraph-integration-audit.md).
+ARG CODEGRAPH_VERSION=1.3.0
 
 # Upgrade Node 20 (base) → Node 24 via NodeSource. Purge existing apt/nvm Node
 # first to prevent dual-binary PATH confusion (same rationale as claude/ variant).
@@ -28,11 +31,24 @@ RUN set -eux; \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
         > /etc/apt/sources.list.d/nodesource.list; \
     apt-get update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        nodejs python3 build-essential; \
+    # codegraph: semantic code-intelligence MCP server for agents.
+    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}"; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     node --version | grep -E "^v24\." \
-        || { echo "ERROR: expected Node 24, got $(node --version)"; exit 1; }
+        || { echo "ERROR: expected Node 24, got $(node --version)"; exit 1; }; \
+    codegraph --version
+
+# sbx bind-mounts /workspace with the host's ownership, tripping git's
+# dubious-ownership guard; and a fresh container has no git identity, so the
+# agent's first commit fails until one is set. System config is the
+# lowest-precedence layer, so any user/global config set later still wins.
+RUN git config --system --add safe.directory '*' \
+ && git config --system core.autocrlf input \
+ && git config --system user.name 'agent' \
+ && git config --system user.email 'agent@sandbox.local'
 
 USER agent
 WORKDIR /home/agent
@@ -41,3 +57,21 @@ COPY --chown=agent:agent context/.codex/config.toml        /home/agent/.codex/co
 COPY --chown=agent:agent context/.codex/AGENTS.md          /home/agent/.codex/AGENTS.md
 COPY --chown=agent:agent context/.codex/skills/            /home/agent/.codex/skills/
 COPY --chown=agent:agent context/.codex/vendor_imports/    /home/agent/.codex/vendor_imports/
+
+# Installed plugin bundles (context-mode, ponytail, bundled browser/chrome,
+# etc.) referenced by config.toml's [plugins.*] entries.
+COPY --chown=agent:agent context/.codex/plugins/           /home/agent/.codex/plugins/
+
+# prepare.ps1 skips node_modules/ from plugins/cache/ (it's built on the
+# host — Windows — and native .node addons like context-mode's better-sqlite3
+# won't load in this Linux container). Reinstall for every plugin dir that
+# ships a package.json so native deps get rebuilt for Linux instead of
+# silently missing. build-essential (above) covers node-gyp compilation for
+# any addon without a prebuilt Linux binary.
+RUN set -eux; \
+    for d in $(find /home/agent/.codex/plugins/cache -maxdepth 8 -name package.json -printf '%h\n'); do \
+        echo "[build] npm install: $d"; \
+        (cd "$d" && npm install --no-audit --no-fund); \
+    done
+
+CMD ["codex", "--dangerously-bypass-approvals-and-sandbox"]

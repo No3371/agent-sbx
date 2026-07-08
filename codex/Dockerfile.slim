@@ -12,12 +12,17 @@ ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
     PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH \
     BASH_ENV=/etc/sandbox-persistent.sh
 
-# Core tools only. Deliberately omits sbx base extras like Docker CLI, Java,
-# man-db, Ubuntu dev bundles, and clipboard bridge.
+# Pinned, not @latest — a shared build artifact should track an audited
+# version explicitly (see .projex/2607081900-codegraph-integration-audit.md).
+ARG CODEGRAPH_VERSION=1.3.0
+
+# Core tools plus native build tooling for plugin deps. Deliberately omits sbx
+# base extras like Docker CLI, Java, man-db, Ubuntu dev bundles, and clipboard bridge.
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq less openssh-client procps ripgrep sudo tini; \
+        ca-certificates curl git jq less openssh-client procps ripgrep sudo tini \
+        python3 build-essential; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
@@ -52,10 +57,16 @@ RUN set -eux; \
 
 RUN set -eux; \
     npm config set update-notifier false; \
-    npm install -g @openai/codex; \
+    npm install -g @openai/codex "@colbymchenry/codegraph@${CODEGRAPH_VERSION}"; \
     ln -sf /usr/local/share/npm-global/bin/codex /home/agent/.local/bin/codex; \
-    chown -h agent:agent /home/agent/.local/bin/codex; \
-    node --version; npm --version; codex --version
+    ln -sf /usr/local/share/npm-global/bin/codegraph /home/agent/.local/bin/codegraph; \
+    chown -h agent:agent /home/agent/.local/bin/codex /home/agent/.local/bin/codegraph; \
+    node --version; npm --version; codex --version; codegraph --version
+
+RUN git config --system --add safe.directory '*' \
+ && git config --system core.autocrlf input \
+ && git config --system user.name 'agent' \
+ && git config --system user.email 'agent@sandbox.local'
 
 USER agent
 WORKDIR /home/agent
@@ -64,6 +75,13 @@ COPY --chown=agent:agent context/.codex/config.toml        /home/agent/.codex/co
 COPY --chown=agent:agent context/.codex/AGENTS.md          /home/agent/.codex/AGENTS.md
 COPY --chown=agent:agent context/.codex/skills/            /home/agent/.codex/skills/
 COPY --chown=agent:agent context/.codex/vendor_imports/    /home/agent/.codex/vendor_imports/
+COPY --chown=agent:agent context/.codex/plugins/           /home/agent/.codex/plugins/
+
+RUN set -eux; \
+    for d in $(find /home/agent/.codex/plugins/cache -maxdepth 8 -name package.json -printf '%h\n'); do \
+        echo "[build] npm install: $d"; \
+        (cd "$d" && npm install --no-audit --no-fund); \
+    done
 
 ENTRYPOINT ["tini", "--"]
-CMD ["codex"]
+CMD ["codex", "--dangerously-bypass-approvals-and-sandbox"]
