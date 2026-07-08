@@ -1,2 +1,5 @@
+# Dockerfiles contain shell continuations; keep LF for Linux builds.
+Dockerfile* text eol=lf
+
 # Shell scripts must stay LF — CRLF breaks shebang and bash parsing.
 *.sh text eol=lf

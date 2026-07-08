@@ -22,7 +22,7 @@ ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        apt-transport-https ca-certificates curl git gnupg jq less openssh-client \
+        apt-transport-https build-essential ca-certificates curl git gnupg jq less openssh-client \
         procps python3 python3-pip python3-venv ripgrep sudo tini unzip; \
     if [ "$INSTALL_DOTNET" = "1" ]; then \
         install -d -m 0755 /etc/apt/keyrings; \
@@ -64,6 +64,15 @@ RUN set -eux; \
         > /home/agent/.bashrc; \
     chown agent:agent /home/agent/.bashrc
 
+# sbx bind-mounts /workspace with the host's ownership, tripping git's
+# dubious-ownership guard; and a fresh container has no git identity, so the
+# agent's first commit fails until one is set. System config is the
+# lowest-precedence layer, so any user/global config set later still wins.
+RUN git config --system --add safe.directory '*' \
+ && git config --system core.autocrlf input \
+ && git config --system user.name 'agent' \
+ && git config --system user.email 'agent@sandbox.local'
+
 # Go official tarball, pinned.
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -78,15 +87,19 @@ RUN set -eux; \
     ln -sf /usr/local/go/bin/go /usr/local/bin/go; \
     ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
-# Claude Code + pnpm.
+# Claude Code + pnpm + codegraph (semantic code-intelligence MCP server for
+# agents; see .projex/2607081900-codegraph-integration-audit.md). Pinned, not
+# @latest — a shared build artifact should track an audited version explicitly.
+ARG CODEGRAPH_VERSION=1.3.0
 RUN set -eux; \
     npm config set update-notifier false; \
     corepack enable; \
     corepack prepare pnpm@latest --activate; \
-    npm install -g @anthropic-ai/claude-code; \
+    npm install -g @anthropic-ai/claude-code "@colbymchenry/codegraph@${CODEGRAPH_VERSION}"; \
     ln -sf /usr/local/share/npm-global/bin/claude /home/agent/.local/bin/claude; \
-    chown -h agent:agent /home/agent/.local/bin/claude; \
-    node --version; npm --version; pnpm --version; claude --version
+    ln -sf /usr/local/share/npm-global/bin/codegraph /home/agent/.local/bin/codegraph; \
+    chown -h agent:agent /home/agent/.local/bin/claude /home/agent/.local/bin/codegraph; \
+    node --version; npm --version; pnpm --version; claude --version; codegraph --version
 
 USER agent
 WORKDIR /home/agent
@@ -101,10 +114,23 @@ COPY --chown=agent:agent context/.claude/hooks/              /home/agent/.claude
 COPY --chown=agent:agent context/.claude/plugins/            /home/agent/.claude/plugins/
 COPY --chown=agent:agent context/scripts/                    /home/agent/.local/bin/
 
+# prepare.ps1 skips node_modules/ from plugins/ (built on the host — Windows
+# — native .node addons like context-mode's better-sqlite3 won't load in this
+# Linux container). Reinstall for every plugin/marketplace dir that ships a
+# package.json so native deps get rebuilt for Linux. build-essential (above)
+# covers node-gyp compilation for any addon without a prebuilt Linux binary.
+RUN set -eux; \
+    for d in $(find /home/agent/.claude/plugins -maxdepth 8 -name package.json -printf '%h\n'); do \
+        echo "[build] npm install: $d"; \
+        (cd "$d" && npm install --no-audit --no-fund); \
+    done
+
 USER root
 RUN chmod +x /home/agent/.local/bin/*.sh \
  && find /home/agent/.claude/hooks -type f \( -name '*.sh' -o -name '*.mjs' -o -name '*.cjs' \) -exec chmod +x {} + \
  && printf '\n# Restore baked claude settings after runtime baseline overwrite.\n. /home/agent/.local/bin/merge-claude-settings.sh\n' \
+        >> /etc/sandbox-persistent.sh \
+ && printf '\n# Wire codegraph into this agent + build/refresh the /workspace graph.\n. /home/agent/.local/bin/codegraph-setup.sh\n' \
         >> /etc/sandbox-persistent.sh
 USER agent
 

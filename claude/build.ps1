@@ -22,7 +22,7 @@ param(
     [switch]$LoadToPodman,     # after Tar export, run `podman load -i <tar>`
     [switch]$SkipPrepare,
     [switch]$NoCache,
-    [string]$Dockerfile = 'Dockerfile',
+    [string]$Dockerfile = 'Dockerfile.slim',
     [string]$Engine = 'podman',
     [string]$HostClaudeDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.claude
     [string]$Destination   = ''    # passed through to prepare.ps1; default: <repo>/context/.claude

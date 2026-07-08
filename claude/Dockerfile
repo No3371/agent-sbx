@@ -21,6 +21,9 @@ USER root
 ARG NODE_MAJOR=24
 ARG DOTNET_CHANNEL=10.0
 ARG GO_VERSION=1.26.3
+# Pinned, not @latest — a shared build artifact should track an audited
+# version explicitly (see .projex/2607081900-codegraph-integration-audit.md).
+ARG CODEGRAPH_VERSION=1.3.0
 
 # Remove any Node shipped by the base image (nvm or apt) before installing
 # NodeSource Node 24. Without purging first, two `node` binaries can land on
@@ -47,14 +50,16 @@ RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         nodejs dotnet-sdk-${DOTNET_CHANNEL} \
-        python3 python3-pip python3-venv; \
+        python3 python3-pip python3-venv build-essential; \
     corepack enable; \
     corepack prepare pnpm@latest --activate; \
+    # codegraph: semantic code-intelligence MCP server for agents.
+    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}"; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     # Verify root-shell versions
     node --version; npm --version; pnpm --version; dotnet --version; \
-    python3 --version; pip3 --version
+    python3 --version; pip3 --version; codegraph --version
 
 # -------- Go (official tarball, pinned) --------
 # apt's golang-go lags upstream by months; pull the official linux-amd64 tarball
@@ -79,6 +84,15 @@ RUN set -eux; \
 RUN su - agent -c 'node --version && npm --version && pnpm --version' \
  && su - agent -c 'node --version' | grep -E "^v24\." \
  || { echo "ERROR: agent shell resolves wrong node (expected v24.x)"; exit 1; }
+
+# sbx bind-mounts /workspace with the host's ownership, tripping git's
+# dubious-ownership guard; and a fresh container has no git identity, so the
+# agent's first commit fails until one is set. System config is the
+# lowest-precedence layer, so any user/global config set later still wins.
+RUN git config --system --add safe.directory '*' \
+ && git config --system core.autocrlf input \
+ && git config --system user.name 'agent' \
+ && git config --system user.email 'agent@sandbox.local'
 
 # -------- agent-level config --------
 USER agent
@@ -113,6 +127,18 @@ COPY --chown=agent:agent context/.claude/hooks/              /home/agent/.claude
 # `enabledPlugins` is preserved by prepare.ps1 so this stays wired up.
 COPY --chown=agent:agent context/.claude/plugins/      /home/agent/.claude/plugins/
 
+# prepare.ps1 skips node_modules/ from plugins/ (it's built on the host —
+# Windows — and native .node addons like context-mode's better-sqlite3 won't
+# load in this Linux container). Reinstall for every plugin/marketplace dir
+# that ships a package.json so native deps get rebuilt for Linux instead of
+# silently missing. build-essential (above) covers node-gyp compilation for
+# any addon without a prebuilt Linux binary.
+RUN set -eux; \
+    for d in $(find /home/agent/.claude/plugins -maxdepth 8 -name package.json -printf '%h\n'); do \
+        echo "[build] npm install: $d"; \
+        (cd "$d" && npm install --no-audit --no-fund); \
+    done
+
 COPY --chown=agent:agent context/scripts/ /home/agent/.local/bin/
 
 RUN chmod +x /home/agent/.local/bin/*.sh \
@@ -128,6 +154,8 @@ RUN chmod +x /home/agent/.local/bin/*.sh \
 # present in the target), so the constant-fire cost is negligible.
 USER root
 RUN printf '\n# Restore baked claude settings after sbx baseline overwrite.\nsource /home/agent/.local/bin/merge-claude-settings.sh\n' \
+        >> /etc/sandbox-persistent.sh \
+ && printf '\n# Wire codegraph into this agent + build/refresh the /workspace graph.\nsource /home/agent/.local/bin/codegraph-setup.sh\n' \
         >> /etc/sandbox-persistent.sh \
  && chmod 0644 /etc/sandbox-persistent.sh
 USER agent

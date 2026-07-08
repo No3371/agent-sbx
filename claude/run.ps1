@@ -8,9 +8,33 @@
 # Run `/login` on the host first. The container mounts the host credentials so
 # Claude Code keeps using the same subscription-backed OAuth account.
 #
+# Conversation history (session transcripts + auto memory) is stored in
+# ~/.claude/projects/<encoded-cwd>/ — NOT in .claude.json — so with --rm it
+# was lost every run. Since the workspace is always mounted at the fixed path
+# /workspace, the encoded dir name is always `-workspace`, so a project-local
+# folder is bind-mounted onto it: history now lives in and travels with the
+# project instead of the host's global ~/.claude.
+#
 # SECURITY: ~/.claude.json and ~/.claude/.credentials.json carry live OAuth /
 # session tokens. Treat them like SSH keys — never commit, never share them
 # (any process/container reading %USERPROFILE% can read the plaintext token).
+# The project's .claude/projects/ history folder can contain sensitive
+# conversation content too; it's covered by this repo's top-level .gitignore
+# (`.claude`), but check your own project's .gitignore if reusing this launcher
+# elsewhere.
+#
+# Runs claude with --permission-mode auto (Claude Code's built-in auto mode,
+# v2.1.83+): reads and working-directory file edits auto-approve with no
+# prompt, while Bash/shell and network calls still route through Claude
+# Code's classifier, which auto-runs what it judges safe and escalates what
+# it doesn't — normal Bash review, just without a human in the loop for
+# routine stuff. This is a different, mutually exclusive mode from
+# --dangerously-skip-permissions (bypassPermissions), which skips review for
+# everything including Bash; auto mode's classifier in fact treats launching
+# something with --dangerously-skip-permissions as a blockable action.
+# Requires the account/model to support auto mode (Team/Enterprise needs an
+# Owner to enable it first) — see prepare.ps1's permissions.ask stripping,
+# which auto mode needs to actually take effect for Edit/Write/NotebookEdit.
 
 [CmdletBinding()]
 param(
@@ -41,15 +65,21 @@ if (-not (Test-Path $credsFile)) {
     throw "Host Claude OAuth credentials not found: $credsFile. Run Claude Code on the host and complete /login first."
 }
 
+# Project-local conversation history (session transcripts + memory), kept
+# alongside the workspace instead of the host's global ~/.claude/projects.
+$historyDir = Join-Path $Workspace '.claude\projects'
+if (-not (Test-Path $historyDir)) { New-Item -ItemType Directory -Force $historyDir | Out-Null }
+
 $runArgs = @(
     'run', '-it', '--rm',
     '-v', ("{0}:/workspace" -f $Workspace),
     '-w', '/workspace',
     '-v', ("{0}:/home/agent/.claude.json" -f $claudeJson),
-    '-v', ("{0}:/home/agent/.claude/.credentials.json" -f $credsFile)
+    '-v', ("{0}:/home/agent/.claude/.credentials.json" -f $credsFile),
+    '-v', ("{0}:/home/agent/.claude/projects" -f $historyDir)
 )
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
-$runArgs += @($Image, 'claude')
+$runArgs += @($Image, 'claude', '--permission-mode', 'auto')
 
 Write-Host "==> $Engine $($runArgs -join ' ')"
 & $Engine @runArgs

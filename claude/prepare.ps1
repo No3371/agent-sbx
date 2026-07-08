@@ -49,6 +49,40 @@ $credentialExcludePatterns = @(
     '*.credentials', '.credentials', 'auth.json', '.token', '*.token',
     'secrets.json', '*.key', '*.pem', '*.p12', '*.pfx', 'token.json', '.auth'
 )
+$excludedDirectoryNames = @('.github', '.git', 'node_modules')
+
+function Test-CredentialFileName([string]$name) {
+    foreach ($pat in $credentialExcludePatterns) {
+        if ($name -like $pat) { return $true }
+    }
+    return $false
+}
+
+function Copy-ItemFiltered([string]$sourcePath, [string]$destinationDir) {
+    $item = Get-Item -LiteralPath $sourcePath -Force
+
+    if ($item.PSIsContainer) {
+        if ($excludedDirectoryNames -contains $item.Name) {
+            Write-Host "[prepare] skipping excluded dir: $($item.FullName)"
+            return
+        }
+
+        $target = Join-Path $destinationDir $item.Name
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        $children = Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+        foreach ($child in $children) {
+            Copy-ItemFiltered $child.FullName $target
+        }
+        return
+    }
+
+    if (Test-CredentialFileName $item.Name) {
+        Write-Warning "[prepare] CREDENTIAL RISK: skipping $($item.FullName)"
+        return
+    }
+
+    Copy-Item -LiteralPath $item.FullName -Destination $destinationDir -Force
+}
 
 foreach ($name in $dirs) {
     $src = Join-Path $HostClaudeDir $name
@@ -57,16 +91,8 @@ foreach ($name in $dirs) {
         $items = Get-ChildItem -Path $src -Force -ErrorAction SilentlyContinue
         if ($items) {
             Write-Host "[prepare] mapping $name ($($items.Count) entries)"
-            Copy-Item -Path (Join-Path $src '*') -Destination $dst -Recurse -Force -Exclude $credentialExcludePatterns
-            # Scan for credential-like files that slipped through (deep nesting) and warn.
-            $leaked = Get-ChildItem -Path $dst -Recurse -Force -ErrorAction SilentlyContinue |
-                Where-Object { -not $_.PSIsContainer } |
-                Where-Object { $n = $_.Name; $credentialExcludePatterns | Where-Object { $n -like $_ } }
-            if ($leaked) {
-                foreach ($f in $leaked) {
-                    Write-Warning "[prepare] CREDENTIAL RISK: removing $($f.FullName) from staged context"
-                    Remove-Item $f.FullName -Force
-                }
+            foreach ($item in $items) {
+                Copy-ItemFiltered $item.FullName $dst
             }
         } else {
             Write-Host "[prepare] $name on host is empty"
@@ -76,15 +102,18 @@ foreach ($name in $dirs) {
     }
 }
 
-# Strip .git/ and .github/ dirs that may exist inside plugin/skill source
-# trees (e.g. git-cloned skills). .git/ carries repo history/remotes that has
-# no place in a baked image; .github/ carries upstream CODEOWNERS,
-# dependabot.yml, and issue templates that should not be redistributed.
-$vcsDirs = Get-ChildItem -Path $Destination -Recurse -Force -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq '.github' -or $_.Name -eq '.git' }
-foreach ($g in $vcsDirs) {
-    Write-Host "[prepare] removing $($g.Name) dir from staged context: $($g.FullName)"
-    Remove-Item $g.FullName -Recurse -Force
+# Host .sh files may carry CRLF line endings (authored on Windows) — bash
+# rejects a `\r` in the shebang line outright. .gitattributes normalizes *.sh
+# in *this* repo, but skills/hooks/scripts staged here come from the host
+# ~/.claude tree, so normalize them explicitly.
+$utf8NoBomLocal = New-Object System.Text.UTF8Encoding $false
+$shFiles = Get-ChildItem -Path $Destination -Recurse -Force -Filter '*.sh' -ErrorAction SilentlyContinue
+foreach ($f in $shFiles) {
+    $content = [System.IO.File]::ReadAllText($f.FullName)
+    if ($content.Contains("`r`n")) {
+        [System.IO.File]::WriteAllText($f.FullName, ($content -replace "`r`n", "`n"), $utf8NoBomLocal)
+        Write-Host "[prepare] normalized CRLF -> LF: $($f.FullName.Substring($Destination.Length))"
+    }
 }
 
 # --- plugins/*.json: rewrite Win install paths so claude-code resolves plugins in sandbox ---
@@ -172,6 +201,38 @@ if ($settings.PSObject.Properties['skipAutoPermissionPrompt']) {
     Write-Host "[prepare] settings: stripped skipAutoPermissionPrompt (not inheriting host auto-approve)"
 }
 
+# Sandbox-only permission posture: run.ps1 launches with `--permission-mode
+# auto` (Claude Code's built-in auto mode, v2.1.83+). In that mode, reads and
+# working-directory file edits (Edit/Write/NotebookEdit) skip Claude Code's
+# classifier and auto-approve with no prompt and no extra classifier call;
+# Bash/shell and network calls still route through the classifier, which
+# auto-runs what it judges safe and escalates/blocks what it doesn't — same
+# as normal, just without a blanket allow. An explicit `ask` rule still
+# forces a prompt in every mode including auto, so any Edit/Write/
+# NotebookEdit ask rule inherited from host settings.json would silently
+# defeat that — strip it. This is injected here rather than in host
+# settings.json so it applies only to the built image, not the host's own
+# Claude Code session.
+if (-not $settings.PSObject.Properties['permissions']) {
+    $settings | Add-Member -NotePropertyName permissions -NotePropertyValue ([pscustomobject]@{})
+}
+if ($settings.permissions.PSObject.Properties['ask']) {
+    $settings.permissions.ask = @($settings.permissions.ask | Where-Object { @('Edit', 'Write', 'NotebookEdit') -notcontains $_ })
+}
+# classifyAllShell (v2.1.193+): auto mode already suspends blanket `Bash`/
+# `Bash(*)` allow rules on entry, but this forces every Bash/PowerShell
+# invocation through the classifier even if a narrower allow rule is ever
+# added later, so shell coverage doesn't silently regress.
+if (-not $settings.PSObject.Properties['autoMode']) {
+    $settings | Add-Member -NotePropertyName autoMode -NotePropertyValue ([pscustomobject]@{})
+}
+if ($settings.autoMode.PSObject.Properties['classifyAllShell']) {
+    $settings.autoMode.classifyAllShell = $true
+} else {
+    $settings.autoMode | Add-Member -NotePropertyName classifyAllShell -NotePropertyValue $true
+}
+Write-Host "[prepare] settings: injected sandbox permission posture (auto mode via run.ps1 --permission-mode auto; Edit/Write/NotebookEdit ask stripped; classifyAllShell on)"
+
 function Rewrite-Command([string]$cmd) {
     if ([string]::IsNullOrEmpty($cmd)) { return $cmd }
     # node.exe (Win path) → node
@@ -185,8 +246,10 @@ function Rewrite-Command([string]$cmd) {
     $cmd = $cmd -replace '"?\$\(\s*cygpath\s+-w\s+"([^"]+)"\s*\)"?', '"$1"'
     # host .claude → sandbox .claude
     $cmd = $cmd -replace '(?i)C:[\\/]Users[\\/][^\\/]+[\\/]\.claude', '/home/agent/.claude'
-    # normalize backslashes
-    $cmd = $cmd -replace '\\', '/'
+    # normalize backslashes (Windows paths only — leave shell/awk/sed escapes
+    # like \t \n \r \\ \" \' \$ alone, or embedded commands like claude-hud's
+    # `awk '{ print $1 "\t" $2 }'` get mangled into a literal "/t" and break)
+    $cmd = $cmd -replace '\\(?![tnr\\"''\$])', '/'
     return $cmd
 }
 
@@ -246,13 +309,21 @@ function Test-HookFileSelfContained([string]$path) {
 
 function Test-HookCommandAllowed([string]$cmd) {
     if ([string]::IsNullOrEmpty($cmd)) { return $false }
-    # .mjs/.cjs hooks under hooks/ may fail at runtime if they import external
-    # modules and no co-located node_modules exists. Probe each referenced file
-    # and drop only if its imports can't resolve from built-ins/relative paths.
-    if ($cmd -match '/home/agent/\.claude/hooks/([^"'' ]+\.(mjs|cjs))') {
+    # Hook commands reference their script either as an already-rewritten
+    # /home/agent path or (if authored portably) a literal $HOME — check both
+    # forms for a file that actually made it into the staged hooks/ dir; a
+    # deleted host script must not survive staging just because its command
+    # string doesn't start with '/' (the bare-command fallback below).
+    if ($cmd -match '(?:/home/agent|\$HOME)/\.claude/hooks/([^"'' ]+)') {
         $relPath = $Matches[1]
         $stagedFile = Join-Path $Destination "hooks/$relPath"
-        if (-not (Test-HookFileSelfContained $stagedFile)) {
+        if (-not (Test-Path $stagedFile)) {
+            Write-Host "[prepare] settings: dropped hook referencing unstaged hook script: hooks/$relPath"
+            return $false
+        }
+        # .mjs/.cjs/.js hooks may additionally fail at runtime if they import
+        # external modules with no co-located node_modules — drop those too.
+        if ($relPath -match '\.(m?js|cjs)$' -and -not (Test-HookFileSelfContained $stagedFile)) {
             Write-Host "[prepare] settings: dropped hook — external deps not resolvable: hooks/$relPath"
             return $false
         }
