@@ -14,5 +14,4 @@ opencode/opencode-custom
 opencode/*-custom
 .probe
 .claude
-.projex
 .codegraph
