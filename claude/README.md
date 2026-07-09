@@ -70,6 +70,41 @@ Legacy sbx path (requires sbx + Win11):
 sbx run --template docker.io/<user>/cc-custom:v1 claude
 ```
 
+## Workspace `node_modules` (Windows host)
+
+If your project already has a `node_modules/` on the host (Windows), `run.ps1`
+masks it with a per-project Docker volume and installs Linux-native deps inside
+the container on first launch — a Windows `node_modules` carries win32 bundler
+binaries (rollup/esbuild/rolldown) that crash on Linux (`You installed esbuild
+for another platform`, `binding-*.mjs command failed: vite`).
+
+- **Shared package-manager cache** — the npm cache (`pm-cache` volume) and pnpm
+  store (`pnpm-store-cache` volume) are shared across *every* project and
+  container of this suite. Only the very first install ever pays real network
+  cost; every later project's first install pulls tarballs from the local cache
+  volume, so it is fast. `node_modules` looking empty at the very start of the
+  first masked run is expected (mask, pre-install).
+- **No host `node_modules`?** node_modules behavior is unchanged (deps install
+  straight into the bind-mount as before); the shared caches still apply.
+- **Per-project volume** — masked deps persist in a named volume
+  (`nmvol-<hash>`, keyed by workspace path) across `--rm` runs; the second run
+  reuses it with no reinstall.
+- **pnpm** — supported via corepack. Its store is relocated out of the workspace
+  (default `/workspace/.pnpm-store` would pollute the host repo) to the shared
+  `pnpm-store-cache` volume via `pnpm config set store-dir`.
+- **yarn Berry/PnP** — no `node_modules` to mask; masking is a no-op. Run
+  `yarn install` inside the container yourself if `.yarn/unplugged` natives break.
+- **Monorepos / nested `node_modules`** — only the top-level dir is masked.
+  Reinstall per-package inside the container where nested `node_modules` carry
+  win32 natives.
+- **opencode image** — has no Node toolchain; masking/caching are disabled there.
+  Run Node/Vite apps in the claude or codex image.
+- **Host IDE** keeps its own host `node_modules` (unaffected by the container's
+  volume — they diverge by design).
+
+Prune the volumes if they accumulate: `docker volume ls -q --filter name=nmvol-`
+(per-project), plus the shared `pm-cache` / `pnpm-store-cache`.
+
 ## Layout
 
 ```

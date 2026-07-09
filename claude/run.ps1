@@ -91,17 +91,48 @@ if (-not (Test-Path $credsFile)) {
 $historyDir = Join-Path $Workspace '.claude\projects'
 if (-not (Test-Path $historyDir)) { New-Item -ItemType Directory -Force $historyDir | Out-Null }
 
+# Shared package-manager caches (named volumes reused by every project/container
+# of this suite). npm's cache (~/.npm) is pre-warmed + agent-owned in the image,
+# so a fresh mount copy-ups clean — no setup needed. pnpm's store otherwise
+# defaults to /workspace/.pnpm-store (pollutes the host repo with Linux store
+# content, per-project, unshareable), so relocate it to a shared HOME volume via
+# `pnpm config set store-dir` and chown the (fresh -> root:root) volume first.
+# Runs every launch, node_modules mask or not.
+$pmSetup = "sudo chown agent:agent /home/agent/.pnpm-store 2>/dev/null; corepack pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
+
+# node_modules boundary: a host (Windows) node_modules bind-mounted into the
+# Linux container carries win32-native bundler binaries (rollup/esbuild/
+# rolldown) that crash here. Only when the host actually has a node_modules do
+# we mask it with a per-project NAMED volume (empty on first run) and install
+# Linux-native deps from empty inside the container — mirroring the plugin
+# reinstall precedent in this Dockerfile. A fresh named volume mounts root:root
+# while we run as agent, so chown it unconditionally (every run, in case the
+# volume was recreated) before the empty-check. Absent -> plain bind-mount, and
+# only the pm-cache volumes above change vs. pre-pivot behavior.
+$maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
+$nmInstall = ""
+if ($maskNodeModules) {
+    $sha   = [System.Security.Cryptography.SHA256]::Create()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant())
+    $hash  = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-','').Substring(0,12).ToLower()
+    $nmVol = "nmvol-$hash"
+    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then corepack pnpm install || pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi;"
+}
+
 $runArgs = @(
     'run', '-it', '--rm',
     '-v', ("{0}:/workspace" -f $Workspace),
     '-w', '/workspace',
     '-v', ("{0}:/home/agent/.claude.json" -f $claudeJson),
     '-v', ("{0}:/home/agent/.claude/.credentials.json" -f $credsFile),
-    '-v', ("{0}:/home/agent/.claude/projects" -f $historyDir)
+    '-v', ("{0}:/home/agent/.claude/projects" -f $historyDir),
+    '-v', 'pm-cache:/home/agent/.npm',
+    '-v', 'pnpm-store-cache:/home/agent/.pnpm-store'
 )
+if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
-$runArgs += @($Image, 'claude', '--permission-mode', 'auto')
+$runArgs += @($Image, 'sh', '-lc', "$pmSetup $nmInstall exec claude --permission-mode auto")
 
 Write-Host "==> $Engine $($runArgs -join ' ')"
 & $Engine @runArgs

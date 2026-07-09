@@ -43,11 +43,33 @@ try {
     # $tz stays $null and the container keeps defaulting to UTC as before.
 } catch { }
 
+# node_modules boundary: a host (Windows) node_modules bind-mounted into the
+# Linux container carries win32-native bundler binaries (rollup/esbuild/
+# rolldown) that crash here. Only when the host actually has a node_modules do
+# we mask it with a per-project NAMED volume (empty on first run) and install
+# Linux-native deps from empty inside the container — mirroring the plugin
+# reinstall precedent in this Dockerfile. A fresh named volume mounts root:root
+# while we run as agent, so chown it unconditionally (every run, in case the
+# volume was recreated) before the empty-check. Absent -> plain bind-mount,
+# unchanged. pnpm not baked here -> pnpm projects belong in the claude image
+# (the pnpm branch errors visibly; documented caveat).
+$maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
+$nmInstall = ""
+if ($maskNodeModules) {
+    $sha   = [System.Security.Cryptography.SHA256]::Create()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant())
+    $hash  = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-','').Substring(0,12).ToLower()
+    $nmVol = "nmvol-$hash"
+    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then corepack pnpm install || pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi; "
+}
+
 $runArgs = @(
     'run', '-it', '--rm',
     '-v', ("{0}:/workspace" -f $Workspace),
-    '-w', '/workspace'
+    '-w', '/workspace',
+    '-v', 'pm-cache:/home/agent/.npm'
 )
+if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 
@@ -59,7 +81,8 @@ if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 # --device-auth (URL + one-time code) instead of the default browser flow,
 # which starts a callback server on localhost:1455 inside the container that
 # the host browser can't reach without publishing that port.
-$bootstrap = "codegraph install --yes --target=codex --location=global; " +
+$bootstrap = $nmInstall +
+             "codegraph install --yes --target=codex --location=global; " +
              "test -d .codegraph || codegraph init; " +
              "codex login --device-auth; exec codex --dangerously-bypass-approvals-and-sandbox"
 $runArgs += @($Image, 'sh', '-lc', $bootstrap)

@@ -60,6 +60,36 @@ Legacy sbx path (requires sbx + Win11):
 sbx run --template docker.io/<user>/codex-custom:v1 codex --dangerously-bypass-approvals-and-sandbox
 ```
 
+## Workspace `node_modules` (Windows host)
+
+If your project already has a `node_modules/` on the host (Windows), `run.ps1`
+masks it with a per-project Docker volume and installs Linux-native deps inside
+the container on first launch — a Windows `node_modules` carries win32 bundler
+binaries (rollup/esbuild/rolldown) that crash on Linux (`You installed esbuild
+for another platform`, `binding-*.mjs command failed: vite`).
+
+- **Shared npm cache** — the npm cache (`pm-cache` volume) is shared across every
+  project and container of this suite. Only the very first install ever pays real
+  network cost; later projects' first installs pull tarballs from the local cache
+  volume, so they are fast. `node_modules` looking empty at the very start of the
+  first masked run is expected (mask, pre-install).
+- **No host `node_modules`?** node_modules behavior is unchanged; the shared npm
+  cache still applies.
+- **Per-project volume** — masked deps persist in a named volume
+  (`nmvol-<hash>`, keyed by workspace path) across `--rm` runs; the second run
+  reuses it with no reinstall.
+- **pnpm** — not baked in this image. Run pnpm projects in the **claude** image
+  (which has pnpm + a shared pnpm store). A `pnpm-lock.yaml` project here triggers
+  a visible `corepack pnpm` error, not a silent failure.
+- **yarn Berry/PnP** — no `node_modules` to mask; masking is a no-op.
+- **Monorepos / nested `node_modules`** — only the top-level dir is masked;
+  reinstall per-package inside the container where needed.
+- **opencode image** — has no Node toolchain; masking/caching are disabled there.
+- **Host IDE** keeps its own host `node_modules` (diverges by design).
+
+Prune the volumes if they accumulate: `docker volume ls -q --filter name=nmvol-`
+(per-project), plus the shared `pm-cache`.
+
 ## Layout
 
 ```
