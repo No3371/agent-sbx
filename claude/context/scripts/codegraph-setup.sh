@@ -15,6 +15,6 @@ command -v codegraph >/dev/null 2>&1 || return 0 2>/dev/null || exit 0
 
 codegraph install --yes --target=claude --location=global >/tmp/codegraph-install.log 2>&1
 
-if [[ -d /workspace && ! -d /workspace/.codegraph ]]; then
+if [ -d /workspace ] && [ ! -d /workspace/.codegraph ]; then
     (cd /workspace && codegraph init) >/tmp/codegraph-init.log 2>&1
 fi

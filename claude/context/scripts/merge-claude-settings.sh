@@ -13,7 +13,7 @@ BAKE_SETTINGS="/home/agent/.claude-bake/settings.local.json"
 TARGET_SETTINGS="/home/agent/.claude/settings.json"
 
 # Only run if the baked settings file exists (may be absent in base builds).
-if [[ ! -f "$BAKE_SETTINGS" ]]; then
+if [ ! -f "$BAKE_SETTINGS" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
