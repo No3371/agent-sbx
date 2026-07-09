@@ -15,6 +15,9 @@ ARG NODE_MAJOR=24
 # Pinned, not @latest — a shared build artifact should track an audited
 # version explicitly (see .projex/2607081900-codegraph-integration-audit.md).
 ARG CODEGRAPH_VERSION=1.3.0
+# agent-browser: browser automation CLI for agents (github.com/vercel-labs/agent-browser).
+# Pinned for the same reason as codegraph above.
+ARG AGENT_BROWSER_VERSION=0.31.1
 
 # Upgrade Node 20 (base) → Node 24 via NodeSource. Purge existing apt/nvm Node
 # first to prevent dual-binary PATH confusion (same rationale as claude/ variant).
@@ -34,12 +37,20 @@ RUN set -eux; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         nodejs python3 build-essential; \
     # codegraph: semantic code-intelligence MCP server for agents.
-    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}"; \
+    # agent-browser: browser automation CLI for agents (Chrome via CDP).
+    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}"; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     node --version | grep -E "^v24\." \
         || { echo "ERROR: expected Node 24, got $(node --version)"; exit 1; }; \
-    codegraph --version
+    codegraph --version; agent-browser --version
+
+# agent-browser install: downloads Chrome for Testing + installs Linux system
+# libs (--with-deps, needs root/apt). HOME is overridden to the agent's home
+# so Chrome and config land there directly instead of under /root, avoiding a
+# second download once we drop to USER agent below.
+RUN HOME=/home/agent agent-browser install --with-deps \
+ && chown -R agent:agent /home/agent/.agent-browser
 
 # sbx bind-mounts /workspace with the host's ownership, tripping git's
 # dubious-ownership guard; and a fresh container has no git identity, so the
@@ -56,6 +67,9 @@ WORKDIR /home/agent
 COPY --chown=agent:agent context/.codex/config.toml        /home/agent/.codex/config.toml
 COPY --chown=agent:agent context/.codex/AGENTS.md          /home/agent/.codex/AGENTS.md
 COPY --chown=agent:agent context/.codex/skills/            /home/agent/.codex/skills/
+# agent-browser discovery stub — Dockerfile-owned (not host-synced), so it
+# survives regardless of what's on the host's ~/.codex/skills.
+COPY --chown=agent:agent skills/agent-browser/             /home/agent/.codex/skills/agent-browser/
 COPY --chown=agent:agent context/.codex/vendor_imports/    /home/agent/.codex/vendor_imports/
 
 # Installed plugin bundles (context-mode, ponytail, bundled browser/chrome,

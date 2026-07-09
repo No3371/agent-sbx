@@ -24,6 +24,9 @@ ARG GO_VERSION=1.26.3
 # Pinned, not @latest — a shared build artifact should track an audited
 # version explicitly (see .projex/2607081900-codegraph-integration-audit.md).
 ARG CODEGRAPH_VERSION=1.3.0
+# agent-browser: browser automation CLI for agents (github.com/vercel-labs/agent-browser).
+# Pinned for the same reason as codegraph above.
+ARG AGENT_BROWSER_VERSION=0.31.1
 
 # Remove any Node shipped by the base image (nvm or apt) before installing
 # NodeSource Node 24. Without purging first, two `node` binaries can land on
@@ -54,12 +57,20 @@ RUN set -eux; \
     corepack enable; \
     corepack prepare pnpm@latest --activate; \
     # codegraph: semantic code-intelligence MCP server for agents.
-    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}"; \
+    # agent-browser: browser automation CLI for agents (Chrome via CDP).
+    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}"; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     # Verify root-shell versions
     node --version; npm --version; pnpm --version; dotnet --version; \
-    python3 --version; pip3 --version; codegraph --version
+    python3 --version; pip3 --version; codegraph --version; agent-browser --version
+
+# agent-browser install: downloads Chrome for Testing + installs Linux system
+# libs (--with-deps, needs root/apt). HOME is overridden to the agent's home
+# so Chrome and config land there directly instead of under /root, avoiding a
+# second download once we drop to USER agent below.
+RUN HOME=/home/agent agent-browser install --with-deps \
+ && chown -R agent:agent /home/agent/.agent-browser
 
 # -------- Go (official tarball, pinned) --------
 # apt's golang-go lags upstream by months; pull the official linux-amd64 tarball
@@ -101,6 +112,9 @@ WORKDIR /home/agent
 # User customizations (skills/agents/tools/commands). prepare.ps1 creates
 # empty placeholders for any that don't exist on host so COPY is stable.
 COPY --chown=agent:agent context/.claude/skills/    /home/agent/.claude/skills/
+# agent-browser discovery stub — Dockerfile-owned (not host-synced), so it
+# survives regardless of what's on the host's ~/.claude/skills.
+COPY --chown=agent:agent skills/agent-browser/      /home/agent/.claude/skills/agent-browser/
 COPY --chown=agent:agent context/.claude/agents/    /home/agent/.claude/agents/
 COPY --chown=agent:agent context/.claude/tools/     /home/agent/.claude/tools/
 COPY --chown=agent:agent context/.claude/commands/  /home/agent/.claude/commands/
