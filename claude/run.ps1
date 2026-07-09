@@ -49,6 +49,27 @@ if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) {
     throw "$Engine not found on PATH"
 }
 
+# Host timezone -> container TZ, so logs/timestamps match the developer's
+# clock instead of defaulting to UTC. TimeZoneInfo.Local.Id is already an IANA
+# name on non-Windows PowerShell; TryConvertWindowsIdToIanaId (.NET 6+, i.e.
+# pwsh 7+) converts Windows-style ids. ponytail: no conversion path on Windows
+# PowerShell 5.1 (.NET Framework lacks that method) — falls back to $null and
+# the container just keeps defaulting to UTC as it did before this change.
+$tz = $null
+try {
+    $localId = [System.TimeZoneInfo]::Local.Id
+    if ((Test-Path variable:IsWindows) -and -not $IsWindows) {
+        # PS Core on Linux/macOS: Local.Id is already an IANA name.
+        $tz = $localId
+    } elseif ([System.TimeZoneInfo].GetMethod('TryConvertWindowsIdToIanaId')) {
+        # Windows (PS Core 7+, .NET 6+): convert the Windows id to IANA.
+        $iana = $null
+        if ([System.TimeZoneInfo]::TryConvertWindowsIdToIanaId($localId, [ref]$iana)) { $tz = $iana }
+    }
+    # else: Windows PowerShell 5.1 — .NET Framework has no IANA conversion,
+    # $tz stays $null and the container keeps defaulting to UTC as before.
+} catch { }
+
 # Host-side persisted state. Bind-mounted as individual files so sibling baked
 # files under /home/agent/.claude are NOT shadowed.
 $claudeJson = Join-Path $env:USERPROFILE '.claude.json'
@@ -79,6 +100,7 @@ $runArgs = @(
     '-v', ("{0}:/home/agent/.claude/projects" -f $historyDir)
 )
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
+if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 $runArgs += @($Image, 'claude', '--permission-mode', 'auto')
 
 Write-Host "==> $Engine $($runArgs -join ' ')"

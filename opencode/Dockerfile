@@ -15,7 +15,7 @@
 
 FROM ghcr.io/anomalyco/opencode
 
-RUN apk add --no-cache bash ca-certificates curl git jq less openssh-client sudo tini
+RUN apk add --no-cache bash ca-certificates curl git jq less openssh-client sudo tini tzdata
 
 # codegraph: semantic code-intelligence MCP server for agents (see
 # .projex/2607081900-codegraph-integration-audit.md). No Node in this Alpine

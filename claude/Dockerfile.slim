@@ -23,7 +23,7 @@ RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         apt-transport-https build-essential ca-certificates curl git gnupg jq less openssh-client \
-        procps python3 python3-pip python3-venv ripgrep sudo tini unzip; \
+        procps python3 python3-pip python3-venv ripgrep sudo tini tzdata unzip; \
     if [ "$INSTALL_DOTNET" = "1" ]; then \
         install -d -m 0755 /etc/apt/keyrings; \
         curl -fsSL "https://packages.microsoft.com/config/debian/$(. /etc/os-release && echo "$VERSION_ID")/packages-microsoft-prod.deb" \
