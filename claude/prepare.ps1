@@ -136,9 +136,28 @@ function Write-JsonNoBom([string]$path, $obj) {
     [System.IO.File]::WriteAllText($path, $json, $Utf8NoBom)
 }
 
+# --- Build-time install pilot (see 2607100235-context-mode-build-time-install-pilot-plan.md) ---
+# Marketplaces listed here are NOT vendored from the host. The Dockerfile installs
+# their plugins fresh via `claude plugin install`, so paths/caches/hook commands are
+# whatever Claude Code writes on Linux — nothing to rewrite. Strip their payload dirs
+# and registry entries so the image has no host-baked state for them and the in-container
+# install writes its own. Extend this list (not fork the logic) for Option A cutover.
+# NOTE: defined here (not near $pluginCachesToDrop) because the installed_plugins.json
+# filter below references it — PowerShell needs it in scope before first use.
+$buildTimeInstallMarketplaces = @('claude-context-mode')
+
 $installedPluginsPath = Join-Path $Destination 'plugins/installed_plugins.json'
 if (Test-Path $installedPluginsPath) {
     $obj = Get-Content $installedPluginsPath -Raw | ConvertFrom-Json
+    if ($obj.PSObject.Properties['plugins']) {
+        foreach ($name in @($obj.plugins.PSObject.Properties.Name)) {
+            $mp = ($name -split '@')[-1]
+            if ($buildTimeInstallMarketplaces -contains $mp) {
+                $obj.plugins.PSObject.Properties.Remove($name)
+                Write-Host "[prepare] installed_plugins.json: removed $name (build-time install)"
+            }
+        }
+    }
     $rewrites = 0
     if ($obj.PSObject.Properties['plugins']) {
         foreach ($name in @($obj.plugins.PSObject.Properties.Name)) {
@@ -169,9 +188,26 @@ foreach ($rel in $pluginCachesToDrop) {
     }
 }
 
+# Strip payload dirs for build-time-installed marketplaces (see $buildTimeInstallMarketplaces).
+foreach ($mp in $buildTimeInstallMarketplaces) {
+    foreach ($sub in @("plugins/cache/$mp", "plugins/marketplaces/$mp")) {
+        $p = Join-Path $Destination $sub
+        if (Test-Path $p) {
+            Remove-Item $p -Recurse -Force
+            Write-Host "[prepare] dropped build-time-install payload: $sub"
+        }
+    }
+}
+
 $knownMarketplacesPath = Join-Path $Destination 'plugins/known_marketplaces.json'
 if (Test-Path $knownMarketplacesPath) {
     $obj = Get-Content $knownMarketplacesPath -Raw | ConvertFrom-Json
+    foreach ($mp in $buildTimeInstallMarketplaces) {
+        if ($obj.PSObject.Properties[$mp]) {
+            $obj.PSObject.Properties.Remove($mp)
+            Write-Host "[prepare] known_marketplaces.json: removed $mp (build-time install)"
+        }
+    }
     $rewrites = 0
     foreach ($name in @($obj.PSObject.Properties.Name)) {
         $entry = $obj.$name

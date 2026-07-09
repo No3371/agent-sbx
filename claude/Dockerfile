@@ -141,6 +141,15 @@ COPY --chown=agent:agent context/.claude/hooks/              /home/agent/.claude
 # `enabledPlugins` is preserved by prepare.ps1 so this stays wired up.
 COPY --chown=agent:agent context/.claude/plugins/      /home/agent/.claude/plugins/
 
+# Build-time install pilot (see .projex/2607100235-context-mode-build-time-install-pilot-plan.md).
+# prepare.ps1 strips context-mode's host-vendored payload + registry entries, so it is
+# installed fresh here against the container's own Linux filesystem — no host-baked paths
+# to rewrite. Public GitHub marketplace, no auth. Runs BEFORE the npm loop below so
+# context-mode's better-sqlite3 gets rebuilt for Linux by that same loop.
+RUN set -eux; \
+    claude plugin marketplace add mksglu/claude-context-mode; \
+    claude plugin install context-mode@claude-context-mode --scope user
+
 # prepare.ps1 skips node_modules/ from plugins/ (it's built on the host —
 # Windows — and native .node addons like context-mode's better-sqlite3 won't
 # load in this Linux container). Reinstall for every plugin/marketplace dir
