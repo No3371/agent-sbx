@@ -38,12 +38,8 @@ Without sbx (Win10) — from any project directory:
 ```
 
 Mounts the current directory as `/workspace` and launches `codex --dangerously-bypass-approvals-and-sandbox` interactively.
-First run only: authenticate inside the container — the token persists to
-`%USERPROFILE%\.codex-docker\auth.json` and survives future runs.
-
-**Security:** `.codex-docker\auth.json` carries a live OAuth token once
-populated. Treat it like an SSH key — never commit, never share the
-`.codex-docker` directory.
+Authenticate with device auth inside the ephemeral container on each run;
+no host credentials are mounted or persisted by `run.ps1`.
 
 Use from any project dir without retyping the repo path — add to your
 PowerShell profile (`$PROFILE`):
