@@ -3,7 +3,7 @@
 > **Status:** Review
 > **Created:** 2026-07-10
 > **Author:** agent
-> **Related Projex:** 2607091752-context-mode-plugin-path-mapping-memo.md
+> **Related Projex:** 2607091752-context-mode-plugin-path-mapping-memo.md | 2607100235-context-mode-build-time-install-pilot-plan.md (Option C pilot plan)
 
 ---
 
