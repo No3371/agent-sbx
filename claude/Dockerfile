@@ -15,12 +15,15 @@
 
 FROM docker/sandbox-templates:claude-code
 
-# -------- system packages: Node 24 + .NET 10 + Go + Python --------
+# -------- system packages: Node 24 + optional .NET, Go, Python --------
 USER root
 
 ARG NODE_MAJOR=24
 ARG DOTNET_CHANNEL=10.0
 ARG GO_VERSION=1.26.3
+ARG INSTALL_GO=1
+ARG INSTALL_DOTNET=1
+ARG INSTALL_PYTHON=1
 # Pinned, not @latest — a shared build artifact should track an audited
 # version explicitly (see .projex/2607081900-codegraph-integration-audit.md).
 ARG CODEGRAPH_VERSION=1.3.0
@@ -33,6 +36,7 @@ ARG AGENT_BROWSER_VERSION=0.31.1
 # PATH (apt's /usr/bin/node vs nvm's /home/agent/.nvm/...) and the agent shell
 # may resolve the older one, making `pnpm` shims invisible to the agent.
 RUN set -eux; \
+    for flag in "$INSTALL_GO" "$INSTALL_DOTNET" "$INSTALL_PYTHON"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg apt-transport-https; \
@@ -46,14 +50,9 @@ RUN set -eux; \
         | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
         > /etc/apt/sources.list.d/nodesource.list; \
-    curl -fsSL "https://packages.microsoft.com/config/ubuntu/$(. /etc/os-release && echo "$VERSION_ID")/packages-microsoft-prod.deb" \
-        -o /tmp/packages-microsoft-prod.deb; \
-    dpkg -i /tmp/packages-microsoft-prod.deb; \
-    rm -f /tmp/packages-microsoft-prod.deb; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        nodejs dotnet-sdk-${DOTNET_CHANNEL} \
-        python3 python3-pip python3-venv build-essential; \
+        nodejs build-essential; \
     corepack enable; \
     corepack prepare pnpm@latest --activate; \
     # codegraph: semantic code-intelligence MCP server for agents.
@@ -62,8 +61,25 @@ RUN set -eux; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     # Verify root-shell versions
-    node --version; npm --version; pnpm --version; dotnet --version; \
-    python3 --version; pip3 --version; codegraph --version; agent-browser --version
+    node --version; npm --version; pnpm --version; codegraph --version; agent-browser --version
+
+RUN set -eux; \
+    if [ "$INSTALL_DOTNET" = "1" ]; then \
+        install -d -m 0755 /etc/apt/keyrings; \
+        curl -fsSL "https://packages.microsoft.com/config/ubuntu/$(. /etc/os-release && echo "$VERSION_ID")/packages-microsoft-prod.deb" -o /tmp/packages-microsoft-prod.deb; \
+        dpkg -i /tmp/packages-microsoft-prod.deb; \
+        rm -f /tmp/packages-microsoft-prod.deb; \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dotnet-sdk-${DOTNET_CHANNEL}; \
+        dotnet --version; \
+    fi; \
+    if [ "$INSTALL_PYTHON" = "1" ]; then \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip python3-venv; \
+        python3 --version; pip3 --version; \
+    fi; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
 
 # agent-browser install: downloads Chrome for Testing + installs Linux system
 # libs (--with-deps, needs root/apt). HOME is overridden to the agent's home
@@ -77,19 +93,21 @@ RUN HOME=/home/agent agent-browser install --with-deps \
 # instead. Installs to /usr/local/go, symlinks binaries into /usr/local/bin so
 # they're on PATH for every shell context (including sbx's stripped exec env).
 RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-        amd64) go_arch=amd64 ;; \
-        arm64) go_arch=arm64 ;; \
-        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" -o /tmp/go.tar.gz; \
-    rm -rf /usr/local/go; \
-    tar -C /usr/local -xzf /tmp/go.tar.gz; \
-    rm -f /tmp/go.tar.gz; \
-    ln -sf /usr/local/go/bin/go    /usr/local/bin/go; \
-    ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt; \
-    go version
+    if [ "$INSTALL_GO" = "1" ]; then \
+        arch="$(dpkg --print-architecture)"; \
+        case "$arch" in \
+            amd64) go_arch=amd64 ;; \
+            arm64) go_arch=arm64 ;; \
+            *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+        esac; \
+        curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" -o /tmp/go.tar.gz; \
+        rm -rf /usr/local/go; \
+        tar -C /usr/local -xzf /tmp/go.tar.gz; \
+        rm -f /tmp/go.tar.gz; \
+        ln -sf /usr/local/go/bin/go /usr/local/bin/go; \
+        ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt; \
+        go version; \
+    fi
 
 # Confirm Node 24 and pnpm are visible from the agent shell (not masked by nvm).
 RUN su - agent -c 'node --version && npm --version && pnpm --version' \

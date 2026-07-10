@@ -35,6 +35,12 @@ bind-mounted at runtime; nothing credential-related is baked into the image.
 `build.ps1` runs `prepare.ps1` automatically unless `-SkipPrepare` is passed,
 and defaults to `-Engine podman`. Pass `-Engine docker` to use Docker.
 
+### Optional language features
+
+This image currently has no optional language features. `-Enable` and `-Disable`
+are accepted for a consistent build interface but reject any selector. The base
+runtime and shared tools remain fixed requirements.
+
 ## Run
 
 From any project directory:

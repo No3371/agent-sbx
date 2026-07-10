@@ -30,6 +30,20 @@ base, for sbx use) is still there — pass `-Dockerfile Dockerfile` to build tha
 ./build.ps1 -Image docker.io/<user>/cc-custom:v1 -Dockerfile Dockerfile -Push   # sbx variant, podman build + push
 ```
 
+### Optional language features
+
+Claude selects `go`, `dotnet`, and `python`; all three are installed by default.
+Use exactly one selector: `-Enable` is a whitelist and `-Disable` is a blacklist.
+Names are case-insensitive; blank, unknown, or duplicate names fail before preparation or build.
+
+```powershell
+./build.ps1 -Image claude-custom:go -Enable go
+./build.ps1 -Image claude-custom:no-dotnet -Disable dotnet
+```
+
+Node, pnpm, CodeGraph, agent-browser, compilers, and system tools are shared
+requirements and cannot be selected.
+
 ## Run
 
 Without sbx (Win10) — from any project directory:

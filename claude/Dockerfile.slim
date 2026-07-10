@@ -1,6 +1,6 @@
 # Slim Claude Code sandbox template
 #   - Starts from Node 24 slim instead of docker/sandbox-templates:claude-code
-#   - Installs Claude Code, pnpm, Python 3, Go, and optional .NET SDK
+#   - Installs Claude Code, pnpm, and optional Python 3, Go, and .NET SDK
 #   - Recreates only the agent user/env pieces needed by run.ps1
 #   - Host OAuth is bind-mounted by run.ps1; no credentials are baked
 
@@ -10,20 +10,23 @@ USER root
 
 ARG GO_VERSION=1.26.3
 ARG DOTNET_CHANNEL=10.0
+ARG INSTALL_GO=1
 ARG INSTALL_DOTNET=1
+ARG INSTALL_PYTHON=1
 
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
-    PATH=/usr/local/share/npm-global/bin:/usr/local/go/bin:/home/agent/.local/bin:$PATH \
+    PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH \
     BASH_ENV=/etc/sandbox-persistent.sh \
     CLAUDE_ENV_FILE=/etc/sandbox-persistent.sh
 
 # Core tools only. Deliberately omits sbx base extras like Docker CLI, Java,
 # man-db, Ubuntu dev bundles, and clipboard bridge.
 RUN set -eux; \
+    for flag in "$INSTALL_GO" "$INSTALL_DOTNET" "$INSTALL_PYTHON"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         apt-transport-https build-essential ca-certificates curl git gnupg jq less openssh-client \
-        procps python3 python3-pip python3-venv ripgrep sudo tini tzdata unzip; \
+        procps ripgrep sudo tini tzdata unzip; \
     if [ "$INSTALL_DOTNET" = "1" ]; then \
         install -d -m 0755 /etc/apt/keyrings; \
         curl -fsSL "https://packages.microsoft.com/config/debian/$(. /etc/os-release && echo "$VERSION_ID")/packages-microsoft-prod.deb" \
@@ -32,6 +35,9 @@ RUN set -eux; \
         rm -f /tmp/packages-microsoft-prod.deb; \
         apt-get update; \
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dotnet-sdk-${DOTNET_CHANNEL}; \
+    fi; \
+    if [ "$INSTALL_PYTHON" = "1" ]; then \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip python3-venv; \
     fi; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
@@ -53,12 +59,12 @@ RUN set -eux; \
     touch /etc/sandbox-persistent.sh; \
     chmod 0644 /etc/sandbox-persistent.sh; \
     printf '%s\n' \
-        'export PATH=/usr/local/share/npm-global/bin:/usr/local/go/bin:/home/agent/.local/bin:$PATH' \
+        'export PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH' \
         'if [ -f /etc/sandbox-persistent.sh ]; then . /etc/sandbox-persistent.sh; fi' \
         'export BASH_ENV=/etc/sandbox-persistent.sh' \
         > /etc/profile.d/sandbox-persistent.sh; \
     printf '%s\n' \
-        'export PATH=/usr/local/share/npm-global/bin:/usr/local/go/bin:/home/agent/.local/bin:$PATH' \
+        'export PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH' \
         'if [ -f /etc/sandbox-persistent.sh ]; then . /etc/sandbox-persistent.sh; fi' \
         'export BASH_ENV=/etc/sandbox-persistent.sh' \
         > /home/agent/.bashrc; \
@@ -75,17 +81,19 @@ RUN git config --system --add safe.directory '*' \
 
 # Go official tarball, pinned.
 RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-        amd64) go_arch=amd64 ;; \
-        arm64) go_arch=arm64 ;; \
-        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" -o /tmp/go.tar.gz; \
-    tar -C /usr/local -xzf /tmp/go.tar.gz; \
-    rm -f /tmp/go.tar.gz; \
-    ln -sf /usr/local/go/bin/go /usr/local/bin/go; \
-    ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+    if [ "$INSTALL_GO" = "1" ]; then \
+        arch="$(dpkg --print-architecture)"; \
+        case "$arch" in \
+            amd64) go_arch=amd64 ;; \
+            arm64) go_arch=arm64 ;; \
+            *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+        esac; \
+        curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" -o /tmp/go.tar.gz; \
+        tar -C /usr/local -xzf /tmp/go.tar.gz; \
+        rm -f /tmp/go.tar.gz; \
+        ln -sf /usr/local/go/bin/go /usr/local/bin/go; \
+        ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt; \
+    fi
 
 # Claude Code + pnpm + codegraph (semantic code-intelligence MCP server for
 # agents; see .projex/2607081900-codegraph-integration-audit.md). Pinned, not

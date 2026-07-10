@@ -1,11 +1,15 @@
 # Build-Time Language Feature Flags
 
-> **Status:** In Progress
+> **Status:** Complete
 > **Created:** 2026-07-10
 > **Author:** Codex — via plan-projex
 > **Source:** Direct request
 > **Related Projex:** 2607081900-codegraph-integration-audit.md (shared CodeGraph tool remains unconditional)
 > **Worktree:** Yes
+> **Completed:** 2026-07-10
+> **Walkthrough:** 2607100855-language-build-feature-flags-walkthrough.md
+
+> Runtime verification remains deferred: this execution environment lacked PowerShell and Docker/Podman. See the walkthrough before relying on container-runtime claims.
 
 ---
 

@@ -28,6 +28,13 @@ To try the no-sbx slim image, use the alternate Dockerfile:
 ./build.ps1 -Image codex-custom:slim -Dockerfile Dockerfile.slim -Engine docker
 ```
 
+### Optional language features
+
+This image currently has no optional language features. `-Enable` and `-Disable`
+are accepted for a consistent build interface but reject any selector. Node,
+Python, package tooling, CodeGraph, agent-browser, compilers, and system tools
+are fixed shared requirements.
+
 ## Run
 
 Without sbx (Win10) — from any project directory:

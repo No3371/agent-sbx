@@ -22,6 +22,8 @@ param(
     [switch]$LoadToPodman,     # after Tar export, run `podman load -i <tar>`
     [switch]$SkipPrepare,
     [switch]$NoCache,
+    [string[]]$Enable,
+    [string[]]$Disable,
     [string]$Dockerfile = 'Dockerfile.slim',
     [string]$Engine = 'podman',
     [string]$HostClaudeDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.claude
@@ -31,6 +33,38 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
+function Resolve-LanguageSelection {
+    param(
+        [string[]]$Enable,
+        [string[]]$Disable,
+        [string[]]$Supported,
+        [bool]$EnableSpecified,
+        [bool]$DisableSpecified
+    )
+
+    if ($EnableSpecified -and $DisableSpecified) { throw '-Enable and -Disable are mutually exclusive.' }
+    if (($EnableSpecified -or $DisableSpecified) -and $Supported.Count -eq 0) {
+        throw 'This image has no optional language features; selectors are unsupported.'
+    }
+
+    $selected = @()
+    $seen = @{}
+    $rawValues = if ($EnableSpecified) { @($Enable) } elseif ($DisableSpecified) { @($Disable) } else { @() }
+    if (($EnableSpecified -or $DisableSpecified) -and $rawValues.Count -eq 0) { throw 'Language selector requires at least one name.' }
+    foreach ($raw in $rawValues) {
+        if ([string]::IsNullOrWhiteSpace($raw)) { throw 'Language names must not be blank.' }
+        $language = $raw.Trim().ToLowerInvariant()
+        if ($seen.ContainsKey($language)) { throw "Language '$language' was selected more than once." }
+        if ($language -notin $Supported) { throw "Unknown language '$language'. Supported: $($Supported -join ', ')." }
+        $seen[$language] = $true
+        $selected += $language
+    }
+
+    if ($EnableSpecified) { return @($selected) }
+    if ($DisableSpecified) { return @($Supported | Where-Object { $_ -notin $selected }) }
+    return @($Supported)
+}
+
 # Input validation
 if ($Image -match '<user>') {
     throw "Replace <user> in -Image with your registry username (e.g. docker.io/yourname/cc-custom:v1)."
@@ -39,6 +73,7 @@ $loadTargets = @()
 if ($LoadToDocker) { $loadTargets += 'docker' }
 if ($LoadToPodman) { $loadTargets += 'podman' }
 if ($loadTargets.Count -gt 0 -and -not $Tar) { throw "-LoadToDocker/-LoadToPodman requires -Tar <path>" }
+$enabledLanguages = Resolve-LanguageSelection -Enable $Enable -Disable $Disable -Supported @('go', 'dotnet', 'python') -EnableSpecified ($PSBoundParameters.ContainsKey('Enable')) -DisableSpecified ($PSBoundParameters.ContainsKey('Disable'))
 
 # Single-quote guard only matters when retag-tar.ps1 will be invoked.
 # (retag-tar.ps1 embeds the tar path in a sh heredoc — single-quote injection risk)
@@ -63,9 +98,14 @@ $dockerfilePath = if ([System.IO.Path]::IsPathRooted($Dockerfile)) { $Dockerfile
 if (-not (Test-Path $dockerfilePath)) { throw "Dockerfile not found: $dockerfilePath" }
 
 $buildArgs = @('build', '-t', $Image, '-f', $dockerfilePath)
+foreach ($language in @('go', 'dotnet', 'python')) {
+    $buildArgs += '--build-arg'
+    $buildArgs += "INSTALL_$($language.ToUpperInvariant())=$([int]($language -in $enabledLanguages))"
+}
 if ($NoCache) { $buildArgs += '--no-cache' }
 $buildArgs += $root
 
+Write-Host "==> optional languages: $($enabledLanguages -join ', ')"
 Write-Host "==> $Engine $($buildArgs -join ' ')"
 & $Engine @buildArgs
 if ($LASTEXITCODE -ne 0) { throw "$Engine build failed ($LASTEXITCODE)" }
