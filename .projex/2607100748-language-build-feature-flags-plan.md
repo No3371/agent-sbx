@@ -1,6 +1,6 @@
 # Build-Time Language Feature Flags
 
-> **Status:** Ready
+> **Status:** In Progress
 > **Created:** 2026-07-10
 > **Author:** Codex — via plan-projex
 > **Source:** Direct request
