@@ -1,6 +1,6 @@
 # Port Claude suite features → OpenCode suite
 
-> **Status:** Ready
+> **Status:** In Progress
 > **Created:** 2026-07-11
 > **Author:** agent (opus)
 > **Source:** Direct request (orchestrate-projex) — "Port from claude suite to opencode suite"
