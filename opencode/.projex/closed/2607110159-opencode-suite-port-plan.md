@@ -1,6 +1,7 @@
 # Port Claude suite features → OpenCode suite
 
-> **Status:** In Progress
+> **Status:** Complete
+> **Execution:** See 2607110159-opencode-suite-port-log.md. All 5 steps implemented + verified (redteam correctness fixes F2-F6 folded in; F1 minimal warning; F7/F8 deferred with rationale). **Known external blocker:** a pre-existing, out-of-scope codegraph v1.3.0 build failure on the Alpine base prevents a full `build.ps1` production image, so criterion 3 (codegraph always present) + full real-image run.ps1 history-persistence are unverified end-to-end; every feature was verified on a throwaway codegraph-omitted image. Recommend a separate patch against codegraph integration.
 > **Created:** 2026-07-11
 > **Author:** agent (opus)
 > **Source:** Direct request (orchestrate-projex) — "Port from claude suite to opencode suite"
@@ -33,14 +34,14 @@ Claude's implementations assume Debian + Node-always-present + Claude's `setting
 
 ### Success Criteria
 
-- [ ] `opencode/Dockerfile.slim` does **not** exist (part 1 — explicit non-goal, asserted).
-- [ ] `build.ps1 -Enable go` / `-Disable python` are accepted and change what the image installs; no selectors = default set installed; unknown language rejected with the supported list.
-- [ ] Built image has `go` and `python3` present when enabled, absent when disabled; `node`, `codegraph`, `agent-browser` always present.
-- [ ] `agent-browser --version` succeeds inside the built image, and `agent-browser` resolves a working browser (system Chromium) without downloading Chrome-for-Testing.
-- [ ] A discovery-stub skill for agent-browser is loadable by opencode (present at `~/.config/opencode/skills/agent-browser/SKILL.md`).
-- [ ] `prepare.ps1` rewrites Windows paths in local `mcp` server `command` arrays of a staged `opencode.json`, drops servers with no Linux mapping (warning), writes back BOM-less valid JSON; a host `opencode.json` with no MCP servers passes through unchanged.
-- [ ] `run.ps1` persists opencode session history across `--rm` in a project-local dir, mounts an opencode plugin/npm cache volume, and masks a host `node_modules` (reinstalling Linux-native deps) only when one is present.
-- [ ] `README.md` reflects the toggle set, agent-browser, and run-state behavior.
+- [x] `opencode/Dockerfile.slim` does **not** exist (part 1 — explicit non-goal, asserted). — verified: absent, never created.
+- [x] `build.ps1 -Enable go` / `-Disable python` are accepted and change what the image installs; no selectors = default set installed; unknown language rejected with the supported list. — verified under PS5.1: `-Enable dotnet` → `Unknown language 'dotnet'. Supported: go, python.`; build-arg mapping correct for default/disable/enable cases.
+- [ ] Built image has `go` and `python3` present when enabled, absent when disabled; `node`, `codegraph`, `agent-browser` always present. — **PARTIAL**: go/python/node/agent-browser verified present/absent-as-toggled on a throwaway codegraph-omitted verify image; `codegraph` itself blocked by a pre-existing, out-of-scope Alpine base defect (`node: not found`, exit 127) that reproduces identically on `main` — independently confirmed by audit. Full real `./build.ps1` image not yet buildable until that defect is fixed (see Recommendations).
+- [x] `agent-browser --version` succeeds inside the built image, and `agent-browser` resolves a working browser (system Chromium) without downloading Chrome-for-Testing. — verified: build-time smoke test + live `agent-browser navigate` against `/usr/bin/chromium`, EXIT 0.
+- [x] A discovery-stub skill for agent-browser is loadable by opencode (present at `~/.config/opencode/skills/agent-browser/SKILL.md`). — verified present, agent-owned, in image.
+- [x] `prepare.ps1` rewrites Windows paths in local `mcp` server `command` arrays of a staged `opencode.json`, drops servers with no Linux mapping (warning), writes back BOM-less valid JSON; a host `opencode.json` with no MCP servers passes through unchanged. — verified via 7-case fixture under Windows PowerShell 5.1.
+- [x] `run.ps1` persists opencode session history across `--rm` in a project-local dir, mounts an opencode plugin/npm cache volume, and masks a host `node_modules` (reinstalling Linux-native deps) only when one is present. — verified structurally (arg construction, both cases) + live (mask/reinstall on verify image); full real-image session persistence blocked by the same codegraph defect as above.
+- [x] `README.md` reflects the toggle set, agent-browser, and run-state behavior. — verified by re-read, no stale claims.
 
 ### Out of Scope
 
