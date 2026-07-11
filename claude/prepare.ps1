@@ -233,6 +233,35 @@ if ($settings.autoMode.PSObject.Properties['classifyAllShell']) {
 }
 Write-Host "[prepare] settings: injected sandbox permission posture (auto mode via run.ps1 --permission-mode auto; Edit/Write/NotebookEdit ask stripped; classifyAllShell on)"
 
+# Pre-approve tools that are baked into the image, installed deliberately, and
+# have no path to the network or to files outside the workspace on their own.
+# A `permissions.allow` match resolves before the classifier runs (same as a
+# narrow `Bash(npm test)` allow rule per auto-mode-config docs), so these skip
+# the classifier round-trip entirely instead of just skipping a forced prompt.
+# Deliberately excludes anything that reaches out: ctx_fetch_and_index (fetches
+# URLs) is left off the ctx_ list so out-of-sandbox network calls still hit the
+# classifier, per this image's permission posture.
+$autoApproveTools = @(
+    'Agent', 'ToolSearch', 'Grep',
+    'mcp__codegraph',
+    'mcp__plugin_context-mode_context-mode__ctx_batch_execute',
+    'mcp__plugin_context-mode_context-mode__ctx_doctor',
+    'mcp__plugin_context-mode_context-mode__ctx_execute',
+    'mcp__plugin_context-mode_context-mode__ctx_execute_file',
+    'mcp__plugin_context-mode_context-mode__ctx_index',
+    'mcp__plugin_context-mode_context-mode__ctx_insight',
+    'mcp__plugin_context-mode_context-mode__ctx_purge',
+    'mcp__plugin_context-mode_context-mode__ctx_search',
+    'mcp__plugin_context-mode_context-mode__ctx_stats',
+    'mcp__plugin_context-mode_context-mode__ctx_upgrade'
+)
+if (-not $settings.permissions.PSObject.Properties['allow']) {
+    $settings.permissions | Add-Member -NotePropertyName allow -NotePropertyValue @()
+}
+$existingAllow = @($settings.permissions.allow)
+$settings.permissions.allow = @($existingAllow + ($autoApproveTools | Where-Object { $existingAllow -notcontains $_ }))
+Write-Host "[prepare] settings: pre-approved no-network/in-workspace-only tools (skip classifier): $($autoApproveTools -join ', ')"
+
 function Rewrite-Command([string]$cmd) {
     if ([string]::IsNullOrEmpty($cmd)) { return $cmd }
     # node.exe (Win path) → node
