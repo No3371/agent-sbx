@@ -40,7 +40,8 @@
 param(
     [string]$Image     = 'cc-custom:v1',
     [string]$Engine    = 'docker',
-    [string]$Workspace = $PWD.Path
+    [string]$Workspace = $PWD.Path,
+    [switch]$EnableBgIsolation
 )
 
 $ErrorActionPreference = 'Stop'
@@ -132,7 +133,14 @@ $runArgs = @(
 if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
-$runArgs += @($Image, 'sh', '-lc', "$pmSetup $nmInstall exec claude --permission-mode auto")
+
+# Disable background-agent worktree isolation unless explicitly enabled.
+# jq creates the worktree object if the baked settings.json lacks one.
+$worktreeOverride = if ($EnableBgIsolation) { '' } else {
+    'jq ''.worktree.bgIsolation = "none"'' /home/agent/.claude/settings.json > /tmp/settings.json.new && mv /tmp/settings.json.new /home/agent/.claude/settings.json; '
+}
+
+$runArgs += @($Image, 'sh', '-lc', "$pmSetup $nmInstall $worktreeOverride exec claude --permission-mode auto")
 
 Write-Host "==> $Engine $($runArgs -join ' ')"
 & $Engine @runArgs

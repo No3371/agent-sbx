@@ -78,6 +78,14 @@ function ccrun { & "<repo-path>\claude\run.ps1" @args }
 
 Then just run `ccrun` from any project directory.
 
+Background-agent worktree isolation is disabled by default (the launcher merges
+`worktree.bgIsolation: "none"` into the container's settings.json at launch).
+Pass `-EnableBgIsolation` to retain the baked Claude Code setting instead:
+
+```powershell
+ccrun -EnableBgIsolation
+```
+
 Legacy sbx path (requires sbx + Win11):
 
 ```powershell
