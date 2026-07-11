@@ -278,8 +278,8 @@ Write-Host "[prepare] settings: injected sandbox permission posture (auto mode v
 # URLs) is left off the ctx_ list so out-of-sandbox network calls still hit the
 # classifier, per this image's permission posture.
 $autoApproveTools = @(
-    'Agent', 'ToolSearch', 'Grep',
-    'mcp__codegraph',
+    'Agent', 'ToolSearch', 'Grep', 'Explore', 'AskUserQuestion'
+    'mcp__codegraph__*',
     'mcp__plugin_context-mode_context-mode__ctx_batch_execute',
     'mcp__plugin_context-mode_context-mode__ctx_doctor',
     'mcp__plugin_context-mode_context-mode__ctx_execute',
