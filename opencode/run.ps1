@@ -6,18 +6,19 @@
 # the container's own state dirs).
 #
 # First run: authenticate once inside the container (`opencode auth login`);
-# the token lands in the mounted auth.json on the host and persists.
+# the token lands in the native host auth.json and persists. The native state
+# directory is also mounted, so the selected model/variant follows into it.
 #
-# Persists across --rm: provider auth (host ~/.opencode-docker/auth.json),
-# session history (project-local .opencode/opencode.db, opencode's SQLite store),
+# Persists across --rm: provider auth + model preferences (host
+# ~/.local/share/opencode/auth.json + ~/.local/state/opencode), session history
+# (project-local .opencode/opencode.db, opencode's SQLite store),
 # and package-manager / opencode plugin caches (named volumes). When the host
 # workspace has a node_modules, it is masked with a per-project named volume and
 # Linux-native deps are reinstalled inside (host node_modules left untouched).
 #
-# SECURITY: .opencode-docker/auth.json carries live provider credentials once
-# populated. Treat it like an SSH key — never commit, never share the
-# .opencode-docker directory (any other process/container reading
-# %USERPROFILE% can read the plaintext token). The project-local
+# SECURITY: .local/share/opencode/auth.json carries live provider credentials.
+# Treat it like an SSH key — never commit or share it (any other
+# process/container reading %USERPROFILE% can read the plaintext token). The project-local
 # .opencode/opencode.db can hold conversation content — add `.opencode/` to the
 # project's .gitignore if reusing this launcher outside this repo.
 
@@ -55,19 +56,22 @@ try {
     # $tz stays $null and the container keeps defaulting to UTC as before.
 } catch { }
 
-# Host-side persisted auth, bind-mounted as a single file so the container's
-# own ~/.local/share/opencode contents are not shadowed.
-$ocDir    = Join-Path $env:USERPROFILE '.opencode-docker'
-$authFile = Join-Path $ocDir 'auth.json'
+# Map OpenCode's native host state: auth lives in data, while the selected
+# model/variant lives in state/model.json. Keep auth as a file mount so the
+# project-local session DB can remain separate.
+$dataDir  = Join-Path $env:USERPROFILE '.local\share\opencode'
+$authFile = Join-Path $dataDir 'auth.json'
+$stateDir = Join-Path $env:USERPROFILE '.local\state\opencode'
 
 # BOM-less write: PS5.1's `Set-Content -Encoding utf8` prefixes a UTF-8 BOM,
 # which can make a strict JSON parser choke on `{}` before the first real
 # write.
-if (-not (Test-Path $ocDir))    { New-Item -ItemType Directory -Force $ocDir | Out-Null }
+if (-not (Test-Path $dataDir))  { New-Item -ItemType Directory -Force $dataDir | Out-Null }
 if (-not (Test-Path $authFile)) {
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($authFile, '{}', $utf8NoBom)
 }
+if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Force $stateDir | Out-Null }
 
 # Project-local session history. opencode 1.17 stores all sessions in a single
 # SQLite DB at ~/.local/share/opencode/opencode.db (verified against opencode
@@ -116,6 +120,7 @@ $runArgs = @(
     '-v', ("{0}:/workspace" -f $Workspace),
     '-w', '/workspace',
     '-v', ("{0}:/home/agent/.local/share/opencode/auth.json" -f $authFile),
+    '-v', ("{0}:/home/agent/.local/state/opencode" -f $stateDir),
     '-v', ("{0}:/home/agent/.local/share/opencode/opencode.db" -f $historyDb),
     '-v', 'opencode-cache:/home/agent/.cache/opencode',
     '-v', 'opencode-pm-cache:/home/agent/.npm',

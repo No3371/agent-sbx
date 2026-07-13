@@ -21,8 +21,9 @@ as root) with:
 
 No `docker/sandbox-templates:opencode` base exists, so unlike `claude/` and
 `codex/` there's no sbx integration here — this is the plain-docker path only,
-run via `run.ps1`. Host auth (`~/.local/share/opencode/auth.json`) is
-bind-mounted at runtime; nothing credential-related is baked into the image.
+run via `run.ps1`. Host auth (`~/.local/share/opencode/auth.json`) and state
+(`~/.local/state/opencode`, including the selected model) are bind-mounted at
+runtime; nothing credential-related is baked into the image.
 
 ## Prerequisites
 
@@ -82,9 +83,10 @@ From any project directory:
 ```
 
 Mounts the current directory as `/workspace` and launches `opencode`
-interactively. First run only: authenticate inside the container
-(`opencode auth login`) — the token persists to
-`%USERPROFILE%\.opencode-docker\auth.json` and survives future runs.
+interactively. It uses your native OpenCode login from
+`%USERPROFILE%\.local\share\opencode\auth.json`; first run only, authenticate
+inside the container (`opencode auth login`) if that file is absent. Your saved
+model selection also follows from `%USERPROFILE%\.local\state\opencode`.
 
 **Persistent state across `--rm`:**
 
@@ -93,6 +95,9 @@ interactively. First run only: authenticate inside the container
   into a **project-local** `.opencode\opencode.db`, so history travels with the
   project and survives `--rm`. (A hard kill can lose the most recent uncommitted
   turn — the `-wal` sidecar only checkpoints on clean exit.)
+- **OpenCode preferences** — the native host state directory
+  (`~/.local/state/opencode`) is mounted, preserving the selected model and
+  variant; the native host `auth.json` is mounted as a single credential file.
 - **Caches** — named volumes persist across runs: `opencode-cache`
   (`~/.cache/opencode`, Bun-installed plugins), `opencode-pm-cache` (`~/.npm`),
   `opencode-pnpm-store-cache` (`~/.pnpm-store`). Names are `opencode-`-prefixed
@@ -104,11 +109,11 @@ interactively. First run only: authenticate inside the container
   per lockfile). The host's `node_modules` (with its win32-native binaries) is
   left untouched. No `node_modules` on the host → plain bind-mount, no reinstall.
 
-**Security:** `.opencode-docker\auth.json` carries live provider credentials
-once populated. Treat it like an SSH key — never commit, never share the
-`.opencode-docker` directory. The project-local `.opencode\opencode.db` can hold
-conversation content — add `.opencode/` to the project's `.gitignore` if reusing
-this launcher outside this repo.
+**Security:** `.local\share\opencode\auth.json` carries live provider
+credentials. Treat it like an SSH key — never commit or share it. The
+project-local `.opencode\opencode.db` can hold conversation content — add
+`.opencode/` to the project's `.gitignore` if reusing this launcher outside this
+repo.
 
 Use from any project dir without retyping the repo path — add to your
 PowerShell profile (`$PROFILE`):
