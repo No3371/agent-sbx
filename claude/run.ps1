@@ -41,13 +41,21 @@ param(
     [string]$Image     = 'cc-custom:v1',
     [string]$Engine    = 'docker',
     [string]$Workspace = $PWD.Path,
-    [switch]$EnableBgIsolation
+    [switch]$EnableBgIsolation,
+    [string]$Prompt,
+    [ValidateRange(0, 2147483647)]
+    [int]$Delay = 0
 )
 
 $ErrorActionPreference = 'Stop'
 
 if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) {
     throw "$Engine not found on PATH"
+}
+
+if ($Delay) {
+    Write-Host "==> Waiting $Delay seconds before starting Claude"
+    Start-Sleep -Seconds $Delay
 }
 
 # Host timezone -> container TZ, so logs/timestamps match the developer's
@@ -140,7 +148,9 @@ $worktreeOverride = if ($EnableBgIsolation) { '' } else {
     'jq ''.worktree.bgIsolation = "none"'' /home/agent/.claude/settings.json > /tmp/settings.json.new && mv /tmp/settings.json.new /home/agent/.claude/settings.json; '
 }
 
-$runArgs += @($Image, 'sh', '-lc', "$pmSetup $nmInstall $worktreeOverride exec claude --permission-mode auto")
+$claudeCommand = "$pmSetup $nmInstall $worktreeOverride exec claude --permission-mode auto `"`$@`""
+$runArgs += @($Image, 'sh', '-lc', $claudeCommand, 'claude-run')
+if ($PSBoundParameters.ContainsKey('Prompt')) { $runArgs += $Prompt }
 
 Write-Host "==> $Engine $($runArgs -join ' ')"
 & $Engine @runArgs
