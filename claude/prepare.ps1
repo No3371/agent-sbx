@@ -474,6 +474,46 @@ if ($settings.PSObject.Properties['hooks']) {
     $settings.hooks = $filteredHooks
 }
 
+# --- plugin-bundled hooks.json: rewrite host paths baked in by plugin self-heal ---
+# Plugins declare their own hooks in <plugin>/hooks/hooks.json (not settings.json).
+# Some plugins (e.g. context-mode) self-normalize ${CLAUDE_PLUGIN_ROOT} placeholders
+# to absolute host paths on first run — on this host that means Windows paths
+# (C:/Program Files/nodejs/node.exe, C:/Users/BA/.claude/...) baked straight into
+# the cached plugin copy. Copy-ItemFiltered stages that file verbatim, so without
+# this pass those absolute Windows paths would ship inside the Linux image.
+function Rewrite-CommandsInObject($obj) {
+    $changed = $false
+    if ($obj -is [System.Array]) {
+        foreach ($item in $obj) {
+            if (Rewrite-CommandsInObject $item) { $changed = $true }
+        }
+    } elseif ($obj -is [pscustomobject]) {
+        foreach ($prop in $obj.PSObject.Properties) {
+            if ($prop.Name -eq 'command' -and $prop.Value -is [string]) {
+                $new = Rewrite-Command $prop.Value
+                if ($new -ne $prop.Value) {
+                    $prop.Value = $new
+                    $changed = $true
+                }
+            } elseif ($prop.Value -is [pscustomobject] -or $prop.Value -is [System.Array]) {
+                if (Rewrite-CommandsInObject $prop.Value) { $changed = $true }
+            }
+        }
+    }
+    return $changed
+}
+$pluginsDir = Join-Path $Destination 'plugins'
+if (Test-Path $pluginsDir) {
+    $pluginHookFiles = Get-ChildItem -Path $pluginsDir -Recurse -Force -Filter 'hooks.json' -ErrorAction SilentlyContinue
+    foreach ($f in $pluginHookFiles) {
+        $obj = Get-Content $f.FullName -Raw | ConvertFrom-Json
+        if (Rewrite-CommandsInObject $obj) {
+            Write-JsonNoBom $f.FullName $obj
+            Write-Host "[prepare] rewrote host paths in plugin hooks.json: $($f.FullName.Substring($Destination.Length))"
+        }
+    }
+}
+
 # --- mcpServers: rewrite host paths so server commands resolve in the sandbox ---
 if ($settings.PSObject.Properties['mcpServers']) {
     $droppedServers = [System.Collections.Generic.List[string]]::new()
