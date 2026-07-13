@@ -176,7 +176,7 @@ COPY --chown=agent:agent context/.claude/plugins/      /home/agent/.claude/plugi
 # to rewrite. Public GitHub marketplace, no auth. Runs BEFORE the npm loop below so
 # context-mode's better-sqlite3 gets rebuilt for Linux by that same loop.
 RUN set -eux; \
-    claude plugin marketplace add mksglu/claude-context-mode; \
+    claude plugin marketplace add mksglu/context-mode; \
     claude plugin install context-mode@context-mode --scope user
 
 # prepare.ps1 skips node_modules/ from plugins/ (it's built on the host —

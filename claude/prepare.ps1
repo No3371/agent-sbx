@@ -144,7 +144,7 @@ function Write-JsonNoBom([string]$path, $obj) {
 # install writes its own. Extend this list (not fork the logic) for Option A cutover.
 # NOTE: defined here (not near $pluginCachesToDrop) because the installed_plugins.json
 # filter below references it — PowerShell needs it in scope before first use.
-$buildTimeInstallMarketplaces = @('claude-context-mode')
+$buildTimeInstallMarketplaces = @('context-mode')
 
 $installedPluginsPath = Join-Path $Destination 'plugins/installed_plugins.json'
 if (Test-Path $installedPluginsPath) {

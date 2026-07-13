@@ -148,7 +148,7 @@ COPY --chown=agent:agent context/.claude/plugins/            /home/agent/.claude
 # Build-time install pilot — see .projex/2607100235-context-mode-build-time-install-pilot-plan.md.
 # (identical rationale to Dockerfile; runs before the npm loop so better-sqlite3 rebuilds for Linux)
 RUN set -eux; \
-    claude plugin marketplace add mksglu/claude-context-mode; \
+    claude plugin marketplace add mksglu/context-mode; \
     claude plugin install context-mode@context-mode --scope user
 
 COPY --chown=agent:agent context/scripts/                    /home/agent/.local/bin/
