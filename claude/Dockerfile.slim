@@ -100,18 +100,22 @@ RUN set -eux; \
 # @latest — a shared build artifact should track an audited version explicitly.
 # agent-browser: browser automation CLI (github.com/vercel-labs/agent-browser),
 # pinned for the same reason as codegraph.
+# playwright: browser test automation library, baked so JS/TS/Node projects
+# don't hit a cold `playwright install` mid-task. Pinned for the same reason.
 ARG CODEGRAPH_VERSION=1.3.0
 ARG AGENT_BROWSER_VERSION=0.31.1
+ARG PLAYWRIGHT_VERSION=1.61.1
 RUN set -eux; \
     npm config set update-notifier false; \
     corepack enable; \
     corepack prepare pnpm@latest --activate; \
-    npm install -g @anthropic-ai/claude-code "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}"; \
+    npm install -g @anthropic-ai/claude-code "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}" "playwright@${PLAYWRIGHT_VERSION}"; \
     ln -sf /usr/local/share/npm-global/bin/claude /home/agent/.local/bin/claude; \
     ln -sf /usr/local/share/npm-global/bin/codegraph /home/agent/.local/bin/codegraph; \
     ln -sf /usr/local/share/npm-global/bin/agent-browser /home/agent/.local/bin/agent-browser; \
-    chown -h agent:agent /home/agent/.local/bin/claude /home/agent/.local/bin/codegraph /home/agent/.local/bin/agent-browser; \
-    node --version; npm --version; pnpm --version; claude --version; codegraph --version; agent-browser --version
+    ln -sf /usr/local/share/npm-global/bin/playwright /home/agent/.local/bin/playwright; \
+    chown -h agent:agent /home/agent/.local/bin/claude /home/agent/.local/bin/codegraph /home/agent/.local/bin/agent-browser /home/agent/.local/bin/playwright; \
+    node --version; npm --version; pnpm --version; claude --version; codegraph --version; agent-browser --version; playwright --version
 
 # agent-browser install: downloads Chrome for Testing + installs Linux system
 # libs (--with-deps, needs root/apt). HOME override writes Chrome/config
@@ -119,6 +123,12 @@ RUN set -eux; \
 # needed after the USER agent switch below.
 RUN HOME=/home/agent agent-browser install --with-deps \
  && chown -R agent:agent /home/agent/.agent-browser
+
+# Playwright's own Chromium build + Linux system libs (--with-deps, needs
+# root/apt). HOME override lands it in the agent's cache instead of /root,
+# avoiding a second download after USER agent below.
+RUN HOME=/home/agent playwright install --with-deps chromium \
+ && chown -R agent:agent /home/agent/.cache/ms-playwright
 
 USER agent
 WORKDIR /home/agent

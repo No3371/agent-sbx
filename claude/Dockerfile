@@ -30,6 +30,9 @@ ARG CODEGRAPH_VERSION=1.3.0
 # agent-browser: browser automation CLI for agents (github.com/vercel-labs/agent-browser).
 # Pinned for the same reason as codegraph above.
 ARG AGENT_BROWSER_VERSION=0.31.1
+# Playwright: baked so JS/TS/Node projects that use it for browser testing don't
+# hit a cold `playwright install` mid-task. Pinned for the same reason as above.
+ARG PLAYWRIGHT_VERSION=1.61.1
 
 # Remove any Node shipped by the base image (nvm or apt) before installing
 # NodeSource Node 24. Without purging first, two `node` binaries can land on
@@ -57,11 +60,12 @@ RUN set -eux; \
     corepack prepare pnpm@latest --activate; \
     # codegraph: semantic code-intelligence MCP server for agents.
     # agent-browser: browser automation CLI for agents (Chrome via CDP).
-    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}"; \
+    # playwright: browser test automation library.
+    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}" "playwright@${PLAYWRIGHT_VERSION}"; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     # Verify root-shell versions
-    node --version; npm --version; pnpm --version; codegraph --version; agent-browser --version
+    node --version; npm --version; pnpm --version; codegraph --version; agent-browser --version; playwright --version
 
 RUN set -eux; \
     if [ "$INSTALL_DOTNET" = "1" ]; then \
@@ -87,6 +91,13 @@ RUN set -eux; \
 # second download once we drop to USER agent below.
 RUN HOME=/home/agent agent-browser install --with-deps \
  && chown -R agent:agent /home/agent/.agent-browser
+
+# Playwright's own Chromium build + Linux system libs (--with-deps, needs
+# root/apt), baked at build time rather than left for a project's first
+# `playwright install` to do cold. HOME override lands it in the agent's cache
+# instead of /root, avoiding a second download after USER agent below.
+RUN HOME=/home/agent playwright install --with-deps chromium \
+ && chown -R agent:agent /home/agent/.cache/ms-playwright
 
 # -------- Go (official tarball, pinned) --------
 # apt's golang-go lags upstream by months; pull the official linux-amd64 tarball
