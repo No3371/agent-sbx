@@ -31,35 +31,36 @@ RUN set -eux; \
     if [ "$INSTALL_GO" = "1" ]; then apk add --no-cache go && go version; fi; \
     if [ "$INSTALL_PYTHON" = "1" ]; then apk add --no-cache python3 py3-pip && python3 --version; fi
 
-# codegraph: semantic code-intelligence MCP server for agents (see
-# .projex/2607081900-codegraph-integration-audit.md). No Node in this Alpine
-# base, so use the self-contained bundle installer instead of npm; pinned,
-# not @latest, matching the claude/codex images. Installed system-wide (not
-# $HOME, which is /root here) so the agent user picks it up too.
-ARG CODEGRAPH_VERSION=v1.3.0
-RUN CODEGRAPH_VERSION=${CODEGRAPH_VERSION} CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin \
-    sh -c 'curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh' \
- && codegraph --version
-
 # agent-browser: browser automation CLI for agents (github.com/vercel-labs/agent-browser).
-# Distributed via npm (native Rust daemon); pinned like codegraph. Alpine has no
-# Node in the base, so add nodejs/npm as the install channel — which also makes
-# node baseline for run.ps1's node_modules reinstall path. Node 24 no longer
-# bundles corepack, so install it explicitly + activate pnpm (run.ps1's pnpm
-# branch depends on it; redteam Finding 6). The daemon needs a browser:
+# codegraph: semantic code-intelligence MCP server for agents. Both are pinned,
+# not @latest, matching the claude/codex images. Alpine has no Node in the base,
+# so add nodejs/npm as the install channel — which also makes node baseline for
+# run.ps1's node_modules reinstall path. Node 24 no longer bundles corepack, so
+# install it explicitly + activate pnpm (run.ps1's pnpm branch depends on it).
+# The daemon needs a browser:
 # `agent-browser install` would fetch Chrome for Testing (glibc) which will NOT
 # run on musl — install Alpine's musl-native Chromium instead and point
 # agent-browser at it via AGENT_BROWSER_EXECUTABLE_PATH (/usr/bin/chromium,
 # verified). The `--version` smoke test fails the build here if a release ships
 # a glibc-only binary (assumption 1 — verified musl-OK at authoring time).
+# Playwright, same musl problem: `playwright install chromium` fetches a
+# glibc-only build that won't run here. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD skips
+# that fetch; the `playwright` package itself still installs so JS/TS/Node
+# projects can `require('playwright')`. A project that needs to actually
+# launch a browser must point it at the musl-native /usr/bin/chromium already
+# installed below, e.g. `chromium.launch({ executablePath: '/usr/bin/chromium' })`.
+ARG CODEGRAPH_VERSION=1.3.0
 ARG AGENT_BROWSER_VERSION=0.31.1
-ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+ARG PLAYWRIGHT_VERSION=1.61.1
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN apk add --no-cache nodejs npm chromium \
  && npm install -g corepack \
  && corepack enable \
  && corepack prepare pnpm@latest --activate \
- && npm install -g "agent-browser@${AGENT_BROWSER_VERSION}" \
- && node --version && npm --version && pnpm --version && agent-browser --version
+ && npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}" "playwright@${PLAYWRIGHT_VERSION}" \
+ && ln -sf "$(command -v node)" "$(npm root -g)/@colbymchenry/codegraph/node_modules/@colbymchenry/codegraph-linux-x64/node" \
+ && node --version && npm --version && pnpm --version && codegraph --version && agent-browser --version && playwright --version
 
 # sbx/host bind-mounts can leave /workspace owned differently than the agent
 # user, tripping git's dubious-ownership guard; and a fresh container has no
