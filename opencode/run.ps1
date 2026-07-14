@@ -96,7 +96,17 @@ if (-not (Test-Path $historyDb))     { [System.IO.File]::WriteAllBytes($historyD
 # not pre-warm ~/.npm, so a fresh opencode-pm-cache volume is root:root and npm
 # install fails without this chown. pnpm otherwise defaults its store into
 # /workspace, so relocate it to the HOME volume. corepack/pnpm baked in (Step 2).
-$pmSetup = "sudo chown agent:agent /home/agent/.npm /home/agent/.pnpm-store /home/agent/.cache/opencode 2>/dev/null; corepack pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
+# `/home/agent/.cache` itself is also chowned: nothing creates that directory at
+# build time, so mounting a volume onto the nested `.cache/opencode` path makes
+# Docker auto-create the missing parent as root:root before the container starts
+# (a Docker mount-point quirk, independent of the image's own user setup — this
+# is the only one of the three suites that mounts anything under `.cache/`, so
+# it's the only one exposed to it). F5's chown covered the volume leaf but not
+# this parent, so corepack (which caches to the sibling `~/.cache/node/corepack`
+# on first pnpm-version fetch) hit EACCES trying to `mkdir` under the root-owned
+# parent. Chowning the parent (non-recursive — the leaf keeps its own chown) is
+# enough: agent can then create any sibling under `.cache` itself.
+$pmSetup = "sudo chown agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.pnpm-store /home/agent/.cache/opencode 2>/dev/null; corepack pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
 
 # node_modules boundary: a host (Windows) node_modules bind-mounted into the
 # Linux container carries win32-native binaries that crash here. Only when the
