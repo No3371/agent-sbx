@@ -1,6 +1,9 @@
 # Swap OpenCode base → glibc, install opencode at build time
 
-> **Status:** In Progress
+> **Status:** Complete
+> **Completed:** 2026-07-14
+> **Walkthrough:** `2607141652-opencode-glibc-base-swap-walkthrough.md`
+> **Execution:** Complete — see `2607140130-opencode-glibc-base-swap-log.md`. Docker build + runtime verified (opencode 1.17.19, Node 24, codegraph index functional, agent-browser/playwright baked, go/python toggles). 2 deviations: **D1** — chown `/home/agent/.cache` parent (not just `.cache/ms-playwright`) so `opencode` runs as the `agent` user (Success Criterion 2); **D2** — `-Disable python` cannot remove the python3 interpreter (NodeSource `nodejs` hard-depends on python3); toggle still controls pip3/venv. That one acceptance-criterion is deferred as partially-met with rationale (base-inherent, no code fix warranted) — flagged for audit.
 > **Created:** 2026-07-14
 > **Author:** agent (opus)
 > **Source:** Direct request — "Follow the pattern of claude/codex suite, replace opencode official image with a base image with better compatibility and install opencode at build time"

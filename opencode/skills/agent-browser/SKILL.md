@@ -9,7 +9,7 @@ hidden: true
 
 Fast browser automation CLI for AI agents. Chrome/Chromium via CDP with accessibility-tree snapshots and compact `@eN` element refs.
 
-This image bakes agent-browser (via npm) and Alpine's system Chromium; `AGENT_BROWSER_EXECUTABLE_PATH` already points the daemon at `/usr/bin/chromium`, so no `agent-browser install` (which would fetch a glibc Chrome-for-Testing that cannot run on this musl base) is needed.
+This image bakes agent-browser and its Chrome-for-Testing browser at build time (`agent-browser install --with-deps`, standard glibc flow), so no runtime browser download is needed.
 
 ## Start here
 

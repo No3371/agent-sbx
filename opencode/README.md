@@ -1,11 +1,11 @@
 # Custom OpenCode sandbox template
 
-Extends `ghcr.io/anomalyco/opencode` (Alpine + the `opencode` binary only, runs
-as root) with:
+Built on `debian:bookworm-slim` (glibc); the `opencode` CLI is installed at
+build time via `npm i -g opencode-ai@<pinned>` (no dependency on a third-party
+pre-baked image). Adds:
 
 - **git, bash, curl, jq, openssh-client, sudo, tini** — the baseline a coding
-  agent needs to work in a repo (the base image ships only `opencode` and
-  `ripgrep`)
+  agent needs to work in a repo
 - A non-root **agent** user (uid 1000), matching the `claude/`/`codex/`
   templates
 - Host `~/.config/opencode` (`opencode.json`, `AGENTS.md`, `plugin/`,
@@ -15,9 +15,11 @@ as root) with:
   their Windows paths mapped to Linux, and servers with no Linux mapping are
   dropped (see "opencode.json MCP rewrite" below). `.git/`/`.github/`/
   `node_modules/` dirs and files matching known credential patterns are skipped.
-- **codegraph**, **agent-browser** (browser automation via system Chromium),
-  **Node.js + npm + pnpm** (agent-browser's install channel; also drives the
-  `run.ps1` node_modules reinstall), and optional **Go / Python** toolchains
+- **Node 24** (NodeSource) **+ npm + pnpm** (via corepack) — opencode's install
+  channel; also drives the `run.ps1` node_modules reinstall
+- **codegraph**, **agent-browser** (browser automation; its Chrome-for-Testing
+  browser is baked at build time via `agent-browser install --with-deps`,
+  standard glibc flow), and optional **Go / Python** toolchains
 
 No `docker/sandbox-templates:opencode` base exists, so unlike `claude/` and
 `codex/` there's no sbx integration here — this is the plain-docker path only,
@@ -43,12 +45,19 @@ and defaults to `-Engine podman`. Pass `-Engine docker` to use Docker.
 
 ### Optional language features
 
-Two Alpine-native (musl) toolchains toggle on/off; **both are ON by default**:
+Two toolchains toggle on/off; **both are ON by default**:
 
-| Language | apk packages | Default |
-|----------|--------------|---------|
-| `go`     | `go`                | on |
-| `python` | `python3`, `py3-pip` | on |
+| Language | Install | Default |
+|----------|---------|---------|
+| `go`     | official tarball, pinned `GO_VERSION`          | on |
+| `python` | `python3`, `python3-pip`, `python3-venv` (apt) | on |
+
+> **Note on `python`:** the NodeSource `nodejs` package (Node 24) depends on
+> `python3`, so a bare `python3` interpreter is **always present** regardless of
+> the toggle. `-Disable python` therefore controls only the Python *dev stack*
+> (`python3-pip` + `python3-venv` are omitted), not the interpreter itself.
+> (On the prior Alpine base `apk add nodejs` pulled no python, so the toggle
+> removed it entirely — this is a Debian/NodeSource difference.)
 
 ```powershell
 ./build.ps1 -Image opencode-custom:v1 -Engine docker              # both on (default)
@@ -57,21 +66,23 @@ Two Alpine-native (musl) toolchains toggle on/off; **both are ON by default**:
 ```
 
 `-Enable`/`-Disable` are mutually exclusive; an unknown selector is rejected
-(`Unknown language 'dotnet'. Supported: go, python.`). **`.NET` is excluded** —
-Alpine ships `dotnet*-sdk` only in edge/community and musl .NET is niche; add it
-later if needed. `node` is **not** a toggle — it's a baseline dependency
-(agent-browser + the run.ps1 reinstall path). apk toolchain versions are not
-pinned (Alpine has no stable per-version pin story here), so they can drift
-between rebuilds like the floating base tag.
+(`Unknown language 'dotnet'. Supported: go, python.`). **`.NET` is not yet a
+toggle** — the prior Alpine base excluded it because musl .NET is niche; on this
+glibc base claude's `dotnet-sdk` apt path would apply directly, so it is now
+feasible (see Notes) but out of scope for this base swap. `node` is **not** a
+toggle — it's a baseline dependency (opencode + agent-browser + the run.ps1
+reinstall path). Go is pinned via `GO_VERSION`; the python apt packages are
+unpinned (they track bookworm's stream) and `pnpm@latest` via corepack floats,
+so those can drift between rebuilds.
 
 ### agent-browser
 
-`agent-browser` (browser automation CLI for agents) is baked from npm and wired
-to Alpine's **system Chromium** via `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium`.
-`agent-browser install` is intentionally **not** run — it would download a glibc
-Chrome-for-Testing that cannot run on this musl base. A discovery-stub skill
-ships at `~/.config/opencode/skills/agent-browser/SKILL.md`; the CLI serves its
-own up-to-date usage docs via `agent-browser skills get core`.
+`agent-browser` (browser automation CLI for agents) is baked from npm, and its
+**Chrome for Testing** browser is installed at build time via
+`agent-browser install --with-deps` (the standard glibc flow) — so no runtime
+browser download is needed. A discovery-stub skill ships at
+`~/.config/opencode/skills/agent-browser/SKILL.md`; the CLI serves its own
+up-to-date usage docs via `agent-browser skills get core`.
 
 ## Run
 
@@ -101,8 +112,8 @@ model selection also follows from `%USERPROFILE%\.local\state\opencode`.
 - **Caches** — named volumes persist across runs: `opencode-cache`
   (`~/.cache/opencode`, Bun-installed plugins), `opencode-pm-cache` (`~/.npm`),
   `opencode-pnpm-store-cache` (`~/.pnpm-store`). Names are `opencode-`-prefixed
-  so they never collide with the `claude/` template's glibc caches on the same
-  host.
+  so they never collide with the `claude/` template's caches on the same host
+  (per-suite isolation — independent lifecycles).
 - **`node_modules` masking** — if the host workspace has a `node_modules`, it is
   masked with a per-project named volume (`opencode-nmvol-<hash>`) and
   Linux-native deps are reinstalled inside the container (`pnpm`/`yarn`/`npm`
@@ -169,7 +180,10 @@ as-is, not stripped) so you can review the auto-approval posture before `-Push`.
 
 ## Notes
 
-- Base image tag (`ghcr.io/anomalyco/opencode`) is floating (`:latest`) —
-  rebuilds on different dates may pull a different base. Pin to a digest for
-  fully reproducible builds.
+- Base is now an official **named** tag (`debian:bookworm-slim`), off the prior
+  unaudited third-party `:latest`. Agent tooling (opencode, codegraph,
+  agent-browser, playwright, Go) is version-pinned via `ARG`. Honest caveat:
+  `bookworm-slim` is itself a rolling tag (not digest-pinned), and `pnpm@latest`
+  via corepack floats — so the base and pnpm can still drift at the patch level
+  between rebuilds. Pin the base to a digest for fully reproducible builds.
 - `$Destination` is recreated clean on each `prepare.ps1` run — there is no incremental staging.

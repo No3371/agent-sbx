@@ -88,32 +88,37 @@ if (-not (Test-Path $historyParent)) { New-Item -ItemType Directory -Force $hist
 if (-not (Test-Path $historyDb))     { [System.IO.File]::WriteAllBytes($historyDb, @()) }
 
 # Shared package-manager + opencode plugin caches (named volumes, per-suite).
-# Namespaced with an `opencode-` prefix so this Alpine/musl store never shares a
-# volume with the claude template's Debian/glibc store for the same name
-# (redteam F4). Fresh named volumes mount root:root; chown every one the non-root
+# Namespaced with an `opencode-` prefix so each suite keeps its own caches: this
+# store never shares a volume with the claude template's for the same name —
+# independent lifecycles, not a base/libc difference (redteam F4). Fresh named volumes mount root:root; chown every one the non-root
 # agent writes to — npm cache (~/.npm), pnpm store, opencode's Bun plugin cache
 # (~/.cache/opencode) — each launch (redteam F5). Unlike claude, this image does
 # not pre-warm ~/.npm, so a fresh opencode-pm-cache volume is root:root and npm
 # install fails without this chown. pnpm otherwise defaults its store into
 # /workspace, so relocate it to the HOME volume. corepack/pnpm baked in (Step 2).
-# `/home/agent/.cache` itself is also chowned: nothing creates that directory at
-# build time, so mounting a volume onto the nested `.cache/opencode` path makes
-# Docker auto-create the missing parent as root:root before the container starts
-# (a Docker mount-point quirk, independent of the image's own user setup — this
-# is the only one of the three suites that mounts anything under `.cache/`, so
-# it's the only one exposed to it). F5's chown covered the volume leaf but not
-# this parent, so corepack (which caches to the sibling `~/.cache/node/corepack`
-# on first pnpm-version fetch) hit EACCES trying to `mkdir` under the root-owned
-# parent. Chowning the parent (non-recursive — the leaf keeps its own chown) is
-# enough: agent can then create any sibling under `.cache` itself.
+# `/home/agent/.cache` itself is also chowned. The image bakes this directory at
+# build time: `playwright install --with-deps chromium` runs as root with
+# HOME=/home/agent, creating `.cache/ms-playwright` (and the `.cache` parent)
+# root:root, and the Dockerfile chowns it back to agent right after (D1). So the
+# parent already exists agent-owned in the image before the container starts. The
+# runtime chown here fixes ownership on top of that baked-in state rather than a
+# directory the image never touched: run.ps1 mounts the `opencode-cache` named
+# volume onto the nested `.cache/opencode` leaf, and a fresh volume mounts
+# root:root — this is the only one of the three suites that mounts anything under
+# `.cache/`, so it's the only one exposed to it. F5's chown covered the volume
+# leaf but not the parent; corepack (which caches to the sibling
+# `~/.cache/node/corepack` on first pnpm-version fetch) needs the parent
+# agent-owned to `mkdir` its sibling. With D1's build-time bake the parent is
+# already agent-owned, so chowning it here is a defensive no-op; the leaf chown
+# stays load-bearing for the fresh volume.
 $pmSetup = "sudo chown agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.pnpm-store /home/agent/.cache/opencode 2>/dev/null; corepack pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
 
 # node_modules boundary: a host (Windows) node_modules bind-mounted into the
 # Linux container carries win32-native binaries that crash here. Only when the
 # host actually has one do we mask it with a per-project NAMED volume (empty on
 # first run) and install Linux-native deps inside — namespaced `opencode-nmvol-`
-# so it never shares the claude template's musl-vs-glibc volume for the same
-# workspace (redteam F4). A fresh named volume mounts root:root while we run as
+# so it never shares the claude template's volume for the same workspace
+# (per-suite isolation, redteam F4). A fresh named volume mounts root:root while we run as
 # agent, so chown it before the empty-check. Absent -> plain bind-mount.
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
