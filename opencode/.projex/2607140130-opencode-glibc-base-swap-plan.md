@@ -1,6 +1,6 @@
 # Swap OpenCode base → glibc, install opencode at build time
 
-> **Status:** Ready
+> **Status:** In Progress
 > **Created:** 2026-07-14
 > **Author:** agent (opus)
 > **Source:** Direct request — "Follow the pattern of claude/codex suite, replace opencode official image with a base image with better compatibility and install opencode at build time"
