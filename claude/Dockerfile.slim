@@ -1,10 +1,10 @@
 # Slim Claude Code sandbox template
-#   - Starts from Node 24 slim instead of docker/sandbox-templates:claude-code
+#   - Starts from Node 25 slim instead of docker/sandbox-templates:claude-code
 #   - Installs Claude Code, pnpm, and optional Python 3, Go, and .NET SDK
 #   - Recreates only the agent user/env pieces needed by run.ps1
 #   - Host OAuth is bind-mounted by run.ps1; no credentials are baked
 
-FROM node:24-bookworm-slim
+FROM node:25-bookworm-slim
 
 USER root
 
@@ -107,8 +107,7 @@ ARG AGENT_BROWSER_VERSION=0.31.1
 ARG PLAYWRIGHT_VERSION=1.61.1
 RUN set -eux; \
     npm config set update-notifier false; \
-    corepack enable; \
-    corepack prepare pnpm@latest --activate; \
+    npm install -g pnpm@latest; \
     npm install -g @anthropic-ai/claude-code "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}" "playwright@${PLAYWRIGHT_VERSION}"; \
     ln -sf /usr/local/share/npm-global/bin/claude /home/agent/.local/bin/claude; \
     ln -sf /usr/local/share/npm-global/bin/codegraph /home/agent/.local/bin/codegraph; \

@@ -2,7 +2,7 @@
 
 Extends `docker/sandbox-templates:claude-code` with:
 
-- **Node 24 LTS** + **pnpm** via corepack
+- **Node 25** + **pnpm** (global npm install)
 - **.NET SDK 10**
 - Host `~/.claude/{settings.json, skills, agents, tools, commands, hooks}` mapped into the sandbox (Win paths rewritten to Linux equivalents)
 
@@ -111,7 +111,7 @@ for another platform`, `binding-*.mjs command failed: vite`).
 - **Per-project volume** — masked deps persist in a named volume
   (`nmvol-<hash>`, keyed by workspace path) across `--rm` runs; the second run
   reuses it with no reinstall.
-- **pnpm** — supported via corepack. Its store is relocated out of the workspace
+- **pnpm** — installed globally via npm. Its store is relocated out of the workspace
   (default `/workspace/.pnpm-store` would pollute the host repo) to the shared
   `pnpm-store-cache` volume via `pnpm config set store-dir`.
 - **yarn Berry/PnP** — no `node_modules` to mask; masking is a no-op. Run

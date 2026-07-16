@@ -95,7 +95,7 @@ if (-not (Test-Path $historyDb))     { [System.IO.File]::WriteAllBytes($historyD
 # (~/.cache/opencode) — each launch (redteam F5). Unlike claude, this image does
 # not pre-warm ~/.npm, so a fresh opencode-pm-cache volume is root:root and npm
 # install fails without this chown. pnpm otherwise defaults its store into
-# /workspace, so relocate it to the HOME volume. corepack/pnpm baked in (Step 2).
+# /workspace, so relocate it to the HOME volume. pnpm baked in (Step 2).
 # `/home/agent/.cache` itself is also chowned. The image bakes this directory at
 # build time: `playwright install --with-deps chromium` runs as root with
 # HOME=/home/agent, creating `.cache/ms-playwright` (and the `.cache` parent)
@@ -106,12 +106,11 @@ if (-not (Test-Path $historyDb))     { [System.IO.File]::WriteAllBytes($historyD
 # volume onto the nested `.cache/opencode` leaf, and a fresh volume mounts
 # root:root — this is the only one of the three suites that mounts anything under
 # `.cache/`, so it's the only one exposed to it. F5's chown covered the volume
-# leaf but not the parent; corepack (which caches to the sibling
-# `~/.cache/node/corepack` on first pnpm-version fetch) needs the parent
-# agent-owned to `mkdir` its sibling. With D1's build-time bake the parent is
-# already agent-owned, so chowning it here is a defensive no-op; the leaf chown
-# stays load-bearing for the fresh volume.
-$pmSetup = "sudo chown agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.pnpm-store /home/agent/.cache/opencode 2>/dev/null; corepack pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
+# leaf but not the parent; any tool that caches to a sibling under `~/.cache`
+# needs the parent agent-owned to `mkdir` there. With D1's build-time bake the
+# parent is already agent-owned, so chowning it here is a defensive no-op; the
+# leaf chown stays load-bearing for the fresh volume.
+$pmSetup = "sudo chown agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.pnpm-store /home/agent/.cache/opencode 2>/dev/null; pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
 
 # node_modules boundary: a host (Windows) node_modules bind-mounted into the
 # Linux container carries win32-native binaries that crash here. Only when the
@@ -127,7 +126,7 @@ if ($maskNodeModules) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant())
     $hash  = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-','').Substring(0,12).ToLower()
     $nmVol = "opencode-nmvol-$hash"
-    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then corepack pnpm install || pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi;"
+    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi;"
 }
 
 $runArgs = @(

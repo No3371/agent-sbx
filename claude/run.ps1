@@ -107,7 +107,7 @@ if (-not (Test-Path $historyDir)) { New-Item -ItemType Directory -Force $history
 # content, per-project, unshareable), so relocate it to a shared HOME volume via
 # `pnpm config set store-dir` and chown the (fresh -> root:root) volume first.
 # Runs every launch, node_modules mask or not.
-$pmSetup = "sudo chown agent:agent /home/agent/.pnpm-store 2>/dev/null; corepack pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
+$pmSetup = "sudo chown agent:agent /home/agent/.pnpm-store 2>/dev/null; pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
 
 # node_modules boundary: a host (Windows) node_modules bind-mounted into the
 # Linux container carries win32-native bundler binaries (rollup/esbuild/
@@ -125,7 +125,7 @@ if ($maskNodeModules) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant())
     $hash  = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-','').Substring(0,12).ToLower()
     $nmVol = "nmvol-$hash"
-    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then corepack pnpm install || pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi;"
+    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi;"
 }
 
 $runArgs = @(

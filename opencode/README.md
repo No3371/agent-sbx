@@ -15,8 +15,8 @@ pre-baked image). Adds:
   their Windows paths mapped to Linux, and servers with no Linux mapping are
   dropped (see "opencode.json MCP rewrite" below). `.git/`/`.github/`/
   `node_modules/` dirs and files matching known credential patterns are skipped.
-- **Node 24** (NodeSource) **+ npm + pnpm** (via corepack) — opencode's install
-  channel; also drives the `run.ps1` node_modules reinstall
+- **Node 25** (NodeSource) **+ npm + pnpm** (global npm install) — opencode's
+  install channel; also drives the `run.ps1` node_modules reinstall
 - **codegraph**, **agent-browser** (browser automation; its Chrome-for-Testing
   browser is baked at build time via `agent-browser install --with-deps`,
   standard glibc flow), and optional **Go / Python** toolchains
@@ -72,8 +72,8 @@ glibc base claude's `dotnet-sdk` apt path would apply directly, so it is now
 feasible (see Notes) but out of scope for this base swap. `node` is **not** a
 toggle — it's a baseline dependency (opencode + agent-browser + the run.ps1
 reinstall path). Go is pinned via `GO_VERSION`; the python apt packages are
-unpinned (they track bookworm's stream) and `pnpm@latest` via corepack floats,
-so those can drift between rebuilds.
+unpinned (they track bookworm's stream) and `pnpm@latest` (global npm install)
+floats, so those can drift between rebuilds.
 
 ### agent-browser
 
@@ -184,6 +184,6 @@ as-is, not stripped) so you can review the auto-approval posture before `-Push`.
   unaudited third-party `:latest`. Agent tooling (opencode, codegraph,
   agent-browser, playwright, Go) is version-pinned via `ARG`. Honest caveat:
   `bookworm-slim` is itself a rolling tag (not digest-pinned), and `pnpm@latest`
-  via corepack floats — so the base and pnpm can still drift at the patch level
+  (global npm install) floats — so the base and pnpm can still drift at the patch level
   between rebuilds. Pin the base to a digest for fully reproducible builds.
 - `$Destination` is recreated clean on each `prepare.ps1` run — there is no incremental staging.

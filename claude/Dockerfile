@@ -1,5 +1,5 @@
 # Custom Claude Code sandbox template
-#   - Latest Node (24 LTS) + pnpm via corepack
+#   - Node 25 + pnpm (global npm install)
 #   - .NET SDK 10 (latest)
 #   - Go (official tarball, pinned via GO_VERSION)
 #   - Python 3 + pip + venv (apt)
@@ -15,10 +15,10 @@
 
 FROM docker/sandbox-templates:claude-code
 
-# -------- system packages: Node 24 + optional .NET, Go, Python --------
+# -------- system packages: Node 25 + optional .NET, Go, Python --------
 USER root
 
-ARG NODE_MAJOR=24
+ARG NODE_MAJOR=25
 ARG DOTNET_CHANNEL=10.0
 ARG GO_VERSION=1.26.3
 ARG INSTALL_GO=1
@@ -35,7 +35,7 @@ ARG AGENT_BROWSER_VERSION=0.31.1
 ARG PLAYWRIGHT_VERSION=1.61.1
 
 # Remove any Node shipped by the base image (nvm or apt) before installing
-# NodeSource Node 24. Without purging first, two `node` binaries can land on
+# NodeSource Node 25. Without purging first, two `node` binaries can land on
 # PATH (apt's /usr/bin/node vs nvm's /home/agent/.nvm/...) and the agent shell
 # may resolve the older one, making `pnpm` shims invisible to the agent.
 RUN set -eux; \
@@ -56,8 +56,7 @@ RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         nodejs build-essential; \
-    corepack enable; \
-    corepack prepare pnpm@latest --activate; \
+    npm install -g pnpm@latest; \
     # codegraph: semantic code-intelligence MCP server for agents.
     # agent-browser: browser automation CLI for agents (Chrome via CDP).
     # playwright: browser test automation library.
@@ -120,10 +119,10 @@ RUN set -eux; \
         go version; \
     fi
 
-# Confirm Node 24 and pnpm are visible from the agent shell (not masked by nvm).
+# Confirm Node 25 and pnpm are visible from the agent shell (not masked by nvm).
 RUN su - agent -c 'node --version && npm --version && pnpm --version' \
- && su - agent -c 'node --version' | grep -E "^v24\." \
- || { echo "ERROR: agent shell resolves wrong node (expected v24.x)"; exit 1; }
+ && su - agent -c 'node --version' | grep -E "^v25\." \
+ || { echo "ERROR: agent shell resolves wrong node (expected v25.x)"; exit 1; }
 
 # sbx bind-mounts /workspace with the host's ownership, tripping git's
 # dubious-ownership guard; and a fresh container has no git identity, so the
