@@ -132,6 +132,31 @@ RUN git config --system --add safe.directory '*' \
  && git config --system user.name 'agent' \
  && git config --system user.email 'agent@sandbox.local'
 
+# rm-guard: shadow the real coreutils `rm` in place with an in-repo wrapper
+# (rm-guard/rm-guard.sh) that refuses to remove /workspace/.git (or anything
+# inside/above it) and passes every other invocation straight through
+# unchanged. Not a `~/.bashrc` alias — bash doesn't expand aliases in the
+# non-interactive shells the agent's shell tool actually uses, so an alias
+# would silently never fire for the one case this exists to cover.
+COPY rm-guard/rm-guard.sh /usr/local/libexec/rm-guard.sh
+RUN set -eux; \
+    chmod 0755 /usr/local/libexec/rm-guard.sh; \
+    real_rm="$(readlink -f "$(command -v rm)")"; \
+    cp "$real_rm" /usr/bin/rm.real; \
+    ln -sf /usr/local/libexec/rm-guard.sh "$real_rm"; \
+    rm --version >/dev/null; \
+    # Self-test: /workspace doesn't exist yet at build time (it's a runtime
+    # bind mount), so fake one up here to actually exercise the guard rather
+    # than have "path not found" masquerade as "blocked".
+    mkdir -p /workspace/.git && echo test > /workspace/.git/HEAD; \
+    if rm -rf /workspace/.git 2>/dev/null; then echo "ERROR: rm-guard did not block direct delete of /workspace/.git"; exit 1; fi; \
+    [ -f /workspace/.git/HEAD ] || { echo "ERROR: /workspace/.git/HEAD missing after a supposedly-blocked delete"; exit 1; }; \
+    if rm -rf /workspace 2>/dev/null; then echo "ERROR: rm-guard did not block ancestor delete of /workspace"; exit 1; fi; \
+    [ -f /workspace/.git/HEAD ] || { echo "ERROR: /workspace/.git/HEAD missing after a supposedly-blocked ancestor delete"; exit 1; }; \
+    touch /tmp/rm-guard-selftest && rm -f /tmp/rm-guard-selftest; \
+    [ ! -e /tmp/rm-guard-selftest ] || { echo "ERROR: rm-guard blocked an unprotected delete"; exit 1; }; \
+    /usr/bin/rm.real -rf /workspace
+
 USER agent
 WORKDIR /home/agent
 

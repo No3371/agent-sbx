@@ -86,6 +86,18 @@ Pass `-EnableBgIsolation` to retain the baked Claude Code setting instead:
 ccrun -EnableBgIsolation
 ```
 
+Default launch is `--permission-mode auto --allow-dangerously-skip-permissions`:
+starts in auto mode (classifier reviews Bash/network, file edits auto-approve),
+with full bypass added to the Shift+Tab mode cycle so you can toggle into/out
+of it mid-session without restarting the container. Pass
+`-DangerouslySkipPermissions` to start directly in bypass instead (skips auto
+mode from the first prompt) — the container remains the blast-radius boundary
+either way:
+
+```powershell
+ccrun -DangerouslySkipPermissions
+```
+
 Legacy sbx path (requires sbx + Win11):
 
 ```powershell

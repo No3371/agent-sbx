@@ -10,7 +10,10 @@
 #     all 4 known GHSA advisories are fixed by 0.78.1/0.79.0, predating this pin).
 #   - Node 25 (NodeSource) satisfies pi's own `engines.node: ">=22.19.0"`; also
 #     drives the shared dev-tool trio (codegraph, agent-browser, playwright),
-#     same as opencode/cursor.
+#     same as opencode/cursor. pnpm is installed globally via npm (mirrors
+#     claude/opencode's npm-installed-pnpm, drop-corepack convention), so
+#     pnpm-lockfile projects reinstall Linux-native deps in run.ps1 same as
+#     npm/yarn ones.
 #   - No MCP: pi deliberately ships no MCP client (see pi's own README — "No MCP.
 #     Build CLI tools with READMEs, or build an extension that adds MCP
 #     support"). codegraph is therefore baked as a plain CLI tool plus a
@@ -25,6 +28,20 @@
 #     unlike opencode/cursor). auth.json/trust.json/models-store.json/sessions/
 #     git/npm are excluded — see prepare.ps1 header and run.ps1 for how those are
 #     handled instead (bind-mounted at runtime, not baked).
+#   - Four pi packages are installed at BUILD TIME via `pi install npm:...`,
+#     each pinned per its own audit in .projex/ (2607171500 pi-subagents,
+#     2607171501 pi-cursor-sdk, 2607171502 pi-web-access, 2607171503
+#     context-mode) — all APPROVED. This mirrors claude/'s build-time-install
+#     precedent for context-mode (see claude/.projex/2607100235-*-pilot-plan.md
+#     and its closed patch): install fresh in-container instead of vendoring a
+#     host copy, so paths/native-module builds are Linux-native from the start.
+#     pi has no separate "marketplace" concept (unlike Claude Code plugins), so
+#     this is simpler than the claude/ pilot — one `pi install npm:pkg@version`
+#     per package, no registry-file surgery needed. context-mode's
+#     `better-sqlite3` native dependency rebuilds against this layer's
+#     build-essential + python3 (present from the baseline/optional-Python
+#     layers below), same requirement claude/Dockerfile already solves for the
+#     same package.
 #
 # No credentials are baked into the image. run.ps1 bind-mounts the host
 # ~/.pi/agent/auth.json (like opencode's auth.json) and forwards whichever
@@ -50,6 +67,16 @@ ARG GO_VERSION=1.26.3
 ARG INSTALL_GO=1
 ARG INSTALL_PYTHON=1
 
+# Pi packages, pinned per their audits in .projex/ (all APPROVED, 2026-07-17):
+#   2607171500-pi-subagents-install-audit.md
+#   2607171501-pi-cursor-sdk-install-audit.md
+#   2607171502-pi-web-access-install-audit.md
+#   2607171503-context-mode-pi-package-install-audit.md
+ARG PI_SUBAGENTS_VERSION=0.14.1
+ARG PI_CURSOR_SDK_VERSION=0.1.59
+ARG PI_WEB_ACCESS_VERSION=0.13.0
+ARG CONTEXT_MODE_VERSION=1.0.169
+
 # Baseline coding-agent tools + Node 25 via NodeSource. ripgrep is included
 # because upstream pi's own reference Dockerfile.pi installs it alongside
 # git/bash/ca-certificates — pi's built-in tools/extensions can shell out to it.
@@ -66,6 +93,7 @@ RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         nodejs build-essential; \
+    npm install -g pnpm@latest; \
     npm install -g --ignore-scripts \
         "@earendil-works/pi-coding-agent@${PI_VERSION}" \
         "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" \
@@ -74,7 +102,7 @@ RUN set -eux; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     node --version | grep -E "^v25\." || { echo "ERROR: expected Node 25, got $(node --version)"; exit 1; }; \
-    pi --version; codegraph --version; agent-browser --version; playwright --version
+    pi --version; codegraph --version; agent-browser --version; playwright --version; pnpm --version
 
 # Non-root agent user (uid 1000), matching claude/opencode/cursor/codex.
 # bookworm-slim leaves uid 1000 free (no `node`-image squatter). NOPASSWD sudo
@@ -137,10 +165,51 @@ RUN git config --system --add safe.directory '*' \
  && git config --system user.name 'agent' \
  && git config --system user.email 'agent@sandbox.local'
 
+# rm-guard: shadow the real coreutils `rm` in place with an in-repo wrapper
+# (rm-guard/rm-guard.sh) that refuses to remove /workspace/.git (or anything
+# inside/above it) and passes every other invocation straight through
+# unchanged. Not a `~/.bashrc` alias — bash doesn't expand aliases in the
+# non-interactive shells the agent's shell tool actually uses, so an alias
+# would silently never fire for the one case this exists to cover.
+COPY rm-guard/rm-guard.sh /usr/local/libexec/rm-guard.sh
+RUN set -eux; \
+    chmod 0755 /usr/local/libexec/rm-guard.sh; \
+    real_rm="$(readlink -f "$(command -v rm)")"; \
+    cp "$real_rm" /usr/bin/rm.real; \
+    ln -sf /usr/local/libexec/rm-guard.sh "$real_rm"; \
+    rm --version >/dev/null; \
+    # Self-test: /workspace doesn't exist yet at build time (it's a runtime
+    # bind mount), so fake one up here to actually exercise the guard rather
+    # than have "path not found" masquerade as "blocked".
+    mkdir -p /workspace/.git && echo test > /workspace/.git/HEAD; \
+    if rm -rf /workspace/.git 2>/dev/null; then echo "ERROR: rm-guard did not block direct delete of /workspace/.git"; exit 1; fi; \
+    [ -f /workspace/.git/HEAD ] || { echo "ERROR: /workspace/.git/HEAD missing after a supposedly-blocked delete"; exit 1; }; \
+    if rm -rf /workspace 2>/dev/null; then echo "ERROR: rm-guard did not block ancestor delete of /workspace"; exit 1; fi; \
+    [ -f /workspace/.git/HEAD ] || { echo "ERROR: /workspace/.git/HEAD missing after a supposedly-blocked ancestor delete"; exit 1; }; \
+    touch /tmp/rm-guard-selftest && rm -f /tmp/rm-guard-selftest; \
+    [ ! -e /tmp/rm-guard-selftest ] || { echo "ERROR: rm-guard blocked an unprotected delete"; exit 1; }; \
+    /usr/bin/rm.real -rf /workspace
+
 USER agent
 WORKDIR /home/agent
 
 COPY --chown=agent:agent context/.pi/agent/ /home/agent/.pi/agent/
+
+# Build-time pi package installs (see .projex audits referenced above). Global
+# installs (no -l), landing in ~/.pi/agent/npm/ — a sibling of the COPY above,
+# which prepare.ps1 always excludes from the host-staged tree, so there is no
+# collision between the baked config and these in-container installs. Each
+# `pi install` is its own `RUN` so a failure in one package is isolated and
+# diagnosable in the build log rather than aborting the others.
+#
+# context-mode has a `postinstall` script (self-heal/config-repair, per its own
+# repo) and a `better-sqlite3` native dependency — review this layer's build
+# output on first build, same caution this repo already applies to the
+# identical package's build-time install in claude/Dockerfile.
+RUN pi install "npm:@tintinweb/pi-subagents@${PI_SUBAGENTS_VERSION}"
+RUN pi install "npm:pi-cursor-sdk@${PI_CURSOR_SDK_VERSION}"
+RUN pi install "npm:pi-web-access@${PI_WEB_ACCESS_VERSION}"
+RUN pi install "npm:context-mode@${CONTEXT_MODE_VERSION}"
 
 # agent-browser discovery stub — repo-owned (not host-synced), survives
 # whatever is in the host's ~/.pi/agent/skills. Agent Skills standard location.

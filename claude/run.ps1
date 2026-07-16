@@ -23,18 +23,27 @@
 # (`.claude`), but check your own project's .gitignore if reusing this launcher
 # elsewhere.
 #
-# Runs claude with --permission-mode auto (Claude Code's built-in auto mode,
-# v2.1.83+): reads and working-directory file edits auto-approve with no
-# prompt, while Bash/shell and network calls still route through Claude
-# Code's classifier, which auto-runs what it judges safe and escalates what
-# it doesn't — normal Bash review, just without a human in the loop for
-# routine stuff. This is a different, mutually exclusive mode from
-# --dangerously-skip-permissions (bypassPermissions), which skips review for
-# everything including Bash; auto mode's classifier in fact treats launching
-# something with --dangerously-skip-permissions as a blockable action.
-# Requires the account/model to support auto mode (Team/Enterprise needs an
-# Owner to enable it first) — see prepare.ps1's permissions.ask stripping,
-# which auto mode needs to actually take effect for Edit/Write/NotebookEdit.
+# Runs claude with --permission-mode auto by default (Claude Code's built-in
+# auto mode, v2.1.83+): reads and working-directory file edits auto-approve
+# with no prompt, while Bash/shell and network calls still route through
+# Claude Code's classifier, which auto-runs what it judges safe and escalates
+# what it doesn't — normal Bash review, just without a human in the loop for
+# routine stuff. Requires the account/model to support auto mode
+# (Team/Enterprise needs an Owner to enable it first) — see prepare.ps1's
+# permissions.ask stripping, which auto mode needs to actually take effect
+# for Edit/Write/NotebookEdit.
+#
+# Also passes --allow-dangerously-skip-permissions, which does NOT start the
+# session in bypass — it just adds bypassPermissions to the Shift+Tab mode
+# cycle (after plan, before auto) so it's reachable mid-session without a
+# restart. --dangerously-skip-permissions (bare) would instead *start* the
+# session already in bypass; auto mode's classifier treats launching that
+# combination as a blockable action, so auto + allow (not auto + bare-skip)
+# is the supported way to get both modes in one session.
+#
+# Pass -DangerouslySkipPermissions to start directly in bypass instead (skips
+# auto mode/the classifier from the first prompt) — the container is still
+# the blast-radius boundary, so this is for when you want that boundary alone.
 
 [CmdletBinding()]
 param(
@@ -42,6 +51,7 @@ param(
     [string]$Engine    = 'docker',
     [string]$Workspace = $PWD.Path,
     [switch]$EnableBgIsolation,
+    [switch]$DangerouslySkipPermissions,
     [string]$Prompt,
     [ValidateRange(0, 2147483647)]
     [int]$Delay = 0
@@ -148,7 +158,8 @@ $worktreeOverride = if ($EnableBgIsolation) { '' } else {
     'jq ''.worktree.bgIsolation = "none"'' /home/agent/.claude/settings.json > /tmp/settings.json.new && mv /tmp/settings.json.new /home/agent/.claude/settings.json; '
 }
 
-$claudeCommand = "$pmSetup $nmInstall $worktreeOverride exec claude --permission-mode auto `"`$@`""
+$permFlag = if ($DangerouslySkipPermissions) { '--dangerously-skip-permissions' } else { '--permission-mode auto --allow-dangerously-skip-permissions' }
+$claudeCommand = "$pmSetup $nmInstall $worktreeOverride exec claude $permFlag `"`$@`""
 $runArgs += @($Image, 'sh', '-lc', $claudeCommand, 'claude-run')
 if ($PSBoundParameters.ContainsKey('Prompt')) { $runArgs += $Prompt }
 
