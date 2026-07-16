@@ -4,6 +4,7 @@ claude/context/.claude/
 codex/context/.codex/
 opencode/context/.config/
 cursor/context/.cursor/
+pi/context/.pi/
 
 # Build artifacts produced by build.ps1; not part of the repo.
 *.tar
@@ -15,6 +16,8 @@ opencode/opencode-custom
 opencode/*-custom
 cursor/cursor-custom
 cursor/*-custom
+pi/pi-custom
+pi/*-custom
 .probe
 .claude
 .codegraph
