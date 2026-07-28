@@ -1,12 +1,30 @@
 # Run the baked cc-custom image without sbx.
 #
 # Mounts the current directory as the container workspace and drops into
-# `claude` interactively. Reuses host OAuth + session state by bind-mounting
-# individual host files (NOT the whole ~/.claude dir, which would shadow the
-# image's baked skills/agents/settings).
+# `claude` interactively. Reuses host OAuth by bind-mounting individual host
+# files (NOT the whole ~/.claude dir, which would shadow the image's baked
+# skills/agents/settings).
 #
 # Run `/login` on the host first. The container mounts the host credentials so
 # Claude Code keeps using the same subscription-backed OAuth account.
+#
+# HOST STATE ISOLATION: ~/.claude.json is NOT mounted. It is Claude Code's
+# global registry — trusted-repo list (projects[<path>].hasTrustDialogAccepted),
+# onboarding flags, model caches — and Claude Code rewrites the whole file from
+# an in-memory snapshot taken at startup. Mounting the host file made every
+# container a second writer racing the host app: whichever instance flushed last
+# overwrote the other's state wholesale, silently wiping trusted repos (observed:
+# a 17h container dropped the host config 39,902 -> 1,074 bytes with `projects`
+# emptied). Instead a throwaway per-run COPY is seeded with just the fields the
+# container needs (OAuth identity + MCP servers), mounted, and deleted on exit.
+# The container can write it freely; the host file is never opened for write.
+#
+# .credentials.json is mounted READ-ONLY for the same reason — two instances
+# racing on OAuth refresh-token rotation can invalidate each other's session.
+# Tradeoff: the container cannot persist a refreshed token, so a very long
+# container session may eventually need a restart rather than refreshing in
+# place. That is the intended trade — a container must not be able to log the
+# host out.
 #
 # Conversation history (session transcripts + auto memory) is stored in
 # ~/.claude/projects/<encoded-cwd>/ — NOT in .claude.json — so with --rm it
@@ -89,21 +107,60 @@ try {
     # $tz stays $null and the container keeps defaulting to UTC as before.
 } catch { }
 
-# Host-side persisted state. Bind-mounted as individual files so sibling baked
-# files under /home/agent/.claude are NOT shadowed.
-$claudeJson = Join-Path $env:USERPROFILE '.claude.json'
-$credsFile  = Join-Path $env:USERPROFILE '.claude\.credentials.json'
+# Host-side state. Bind-mounted as individual files so sibling baked files
+# under /home/agent/.claude are NOT shadowed.
+$hostClaudeJson = Join-Path $env:USERPROFILE '.claude.json'
+$credsFile      = Join-Path $env:USERPROFILE '.claude\.credentials.json'
 
-# Pre-create the host files so the engine bind-mounts them as files, not as
-# freshly-created empty directories (Docker creates a dir if the source path
-# is absent). BOM-less write: PS5.1's `Set-Content -Encoding utf8` prefixes a
-# UTF-8 BOM, which can make a strict JSON parser choke on `{}` before the
-# first real write.
-$utf8NoBom = New-Object System.Text.UTF8Encoding $false
-if (-not (Test-Path $claudeJson)) { [System.IO.File]::WriteAllText($claudeJson, '{}', $utf8NoBom) }
 if (-not (Test-Path $credsFile)) {
     throw "Host Claude OAuth credentials not found: $credsFile. Run Claude Code on the host and complete /login first."
 }
+
+# Per-run throwaway .claude.json for the container (see HOST STATE ISOLATION).
+# Seeded from the host file with only what the container actually needs:
+#   oauthAccount / userID  - so the mounted credentials resolve to a logged-in
+#                            account instead of re-prompting for /login
+#   mcpServers             - host-configured MCP servers the container consumed
+#                            before this became a copy
+#   firstStartTime         - suppresses first-run treatment
+# Deliberately NOT copied: `projects` (the host trust registry + per-project
+# allowedTools), caches, migration flags. The container has no use for the
+# host's other repos, so it never sees them.
+#
+# BOM-less write: PS5.1's `Set-Content -Encoding utf8` prefixes a UTF-8 BOM,
+# which can make a strict JSON parser choke.
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+$runId     = [guid]::NewGuid().ToString('N').Substring(0, 12)
+$claudeJsonCopy = Join-Path ([System.IO.Path]::GetTempPath()) "cc-custom-claude-$runId.json"
+
+$seed = [ordered]@{}
+if (Test-Path $hostClaudeJson) {
+    try {
+        $hostCfg = Get-Content -LiteralPath $hostClaudeJson -Raw | ConvertFrom-Json
+        foreach ($key in 'oauthAccount', 'userID', 'firstStartTime', 'mcpServers') {
+            $prop = $hostCfg.PSObject.Properties[$key]
+            if ($prop -and $null -ne $prop.Value) { $seed[$key] = $prop.Value }
+        }
+    } catch {
+        # Unparseable host config is not fatal — the container just starts from
+        # an empty one and prompts /login, exactly as the pre-copy design did.
+        Write-Warning "[run] could not parse ${hostClaudeJson}: $($_.Exception.Message)"
+        Write-Warning "[run] container will start from an empty config (expect a /login prompt)"
+    }
+}
+
+# Workspace is always mounted at the fixed path /workspace, so pre-accept the
+# trust dialog for it — the copy is fresh every run and would otherwise prompt.
+$seed['hasCompletedOnboarding'] = $true
+$seed['projects'] = @{
+    '/workspace' = [ordered]@{
+        hasTrustDialogAccepted                  = $true
+        projectOnboardingSeenCount              = 1
+        hasClaudeMdExternalIncludesApproved     = $false
+        hasClaudeMdExternalIncludesWarningShown = $false
+    }
+}
+[System.IO.File]::WriteAllText($claudeJsonCopy, ($seed | ConvertTo-Json -Depth 100), $utf8NoBom)
 
 # Project-local conversation history (session transcripts + memory), kept
 # alongside the workspace instead of the host's global ~/.claude/projects.
@@ -142,8 +199,8 @@ $runArgs = @(
     'run', '-it', '--rm',
     '-v', ("{0}:/workspace" -f $Workspace),
     '-w', '/workspace',
-    '-v', ("{0}:/home/agent/.claude.json" -f $claudeJson),
-    '-v', ("{0}:/home/agent/.claude/.credentials.json" -f $credsFile),
+    '-v', ("{0}:/home/agent/.claude.json" -f $claudeJsonCopy),
+    '-v', ("{0}:/home/agent/.claude/.credentials.json:ro" -f $credsFile),
     '-v', ("{0}:/home/agent/.claude/projects" -f $historyDir),
     '-v', 'pm-cache:/home/agent/.npm',
     '-v', 'pnpm-store-cache:/home/agent/.pnpm-store'
@@ -164,5 +221,12 @@ $runArgs += @($Image, 'sh', '-lc', $claudeCommand, 'claude-run')
 if ($PSBoundParameters.ContainsKey('Prompt')) { $runArgs += $Prompt }
 
 Write-Host "==> $Engine $($runArgs -join ' ')"
-& $Engine @runArgs
-if ($LASTEXITCODE -ne 0) { throw "$Engine run failed ($LASTEXITCODE)" }
+try {
+    & $Engine @runArgs
+    $engineExit = $LASTEXITCODE
+} finally {
+    # The copy carries the host's OAuth account metadata — do not leave it in
+    # temp. `finally` so it is removed on Ctrl-C / engine failure too.
+    Remove-Item -LiteralPath $claudeJsonCopy -Force -ErrorAction SilentlyContinue
+}
+if ($engineExit -ne 0) { throw "$Engine run failed ($engineExit)" }
