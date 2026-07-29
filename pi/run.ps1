@@ -90,8 +90,6 @@ $sessionsVol = "pi-sessions-$sessionHash"
 # templates' volume for the same workspace (per-suite isolation). A fresh
 # named volume mounts root:root while we run as agent, so chown it before the
 # empty-check. Absent -> plain bind-mount.
-# No pnpm baked here (mirrors cursor/codex, not opencode) -> pnpm projects
-# belong in the claude/opencode images (the pnpm branch errors visibly).
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
 if ($maskNodeModules) {
@@ -99,14 +97,17 @@ if ($maskNodeModules) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant())
     $hash  = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-','').Substring(0,12).ToLower()
     $nmVol = "pi-nmvol-$hash"
-    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then echo '[run] pnpm-lock.yaml found but pnpm is not baked in this image -- use the claude/ or opencode/ suite for pnpm projects' >&2; exit 1; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi; "
+    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi; "
 }
 
 # Forward whichever provider credential env vars are set on the host. Never
 # baked into the image — only passed at `docker run` time, same principle as
 # the other suites' API-key passthrough. List taken from pi's own
 # docs/providers.md env-var table (Anthropic, OpenAI, Bedrock, Azure, Vertex,
-# Cloudflare, OpenRouter, and the rest of the built-in provider catalog).
+# Cloudflare, OpenRouter, and the rest of the built-in provider catalog), plus
+# the build-time-installed pi packages' own env vars (CURSOR_API_KEY for
+# pi-cursor-sdk; the search-provider keys for pi-web-access — see README "Pi
+# packages").
 $providerEnvVars = @(
     'ANTHROPIC_API_KEY','ANT_LING_API_KEY','AZURE_OPENAI_API_KEY','AZURE_OPENAI_BASE_URL',
     'AZURE_OPENAI_RESOURCE_NAME','AZURE_OPENAI_API_VERSION','AZURE_OPENAI_DEPLOYMENT_NAME_MAP',
@@ -121,7 +122,9 @@ $providerEnvVars = @(
     'MINIMAX_API_KEY','MINIMAX_CN_API_KEY',
     'XIAOMI_API_KEY','XIAOMI_TOKEN_PLAN_CN_API_KEY','XIAOMI_TOKEN_PLAN_AMS_API_KEY','XIAOMI_TOKEN_PLAN_SGP_API_KEY',
     'GOOGLE_CLOUD_PROJECT','GOOGLE_CLOUD_LOCATION',
-    'PI_SKIP_VERSION_CHECK','PI_TELEMETRY','PI_OFFLINE'
+    'PI_SKIP_VERSION_CHECK','PI_TELEMETRY','PI_OFFLINE',
+    'CURSOR_API_KEY',
+    'BRAVE_API_KEY','EXA_API_KEY','PERPLEXITY_API_KEY','TAVILY_API_KEY','PARALLEL_API_KEY','GOOGLE_GEMINI_BASE_URL'
 )
 $envForward = @()
 foreach ($name in $providerEnvVars) {
@@ -139,7 +142,8 @@ $runArgs = @(
     '-w', '/workspace',
     '-v', ("{0}:/home/agent/.pi/agent/auth.json" -f $authFile),
     '-v', "${sessionsVol}:/home/agent/.pi/agent/sessions",
-    '-v', 'pi-pm-cache:/home/agent/.npm'
+    '-v', 'pi-pm-cache:/home/agent/.npm',
+    '-v', 'pi-pnpm-store-cache:/home/agent/.pnpm-store'
 )
 if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
@@ -147,9 +151,11 @@ if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 $runArgs += $envForward
 
 # Fresh named volumes (auth.json's parent dir already exists from the image;
-# the sessions volume and npm cache do not) mount root:root while we run as
-# agent — chown before pi/npm try to write there.
-$pmSetup = "sudo chown agent:agent /home/agent/.pi/agent/sessions /home/agent/.npm 2>/dev/null; "
+# the sessions, npm cache, and pnpm store volumes do not) mount root:root while
+# we run as agent — chown before pi/npm/pnpm try to write there. pnpm
+# otherwise defaults its store into /workspace, so relocate it to the HOME
+# volume, same as claude/opencode.
+$pmSetup = "sudo chown agent:agent /home/agent/.pi/agent/sessions /home/agent/.npm /home/agent/.pnpm-store 2>/dev/null; pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true; "
 
 # codegraph has no --target=pi (see skills/codegraph/SKILL.md) — pi has no MCP
 # client to wire a server into anyway, so there is no `codegraph install`

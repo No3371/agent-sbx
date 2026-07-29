@@ -19,12 +19,22 @@
 # container needs (OAuth identity + MCP servers), mounted, and deleted on exit.
 # The container can write it freely; the host file is never opened for write.
 #
-# .credentials.json is mounted READ-ONLY for the same reason — two instances
-# racing on OAuth refresh-token rotation can invalidate each other's session.
-# Tradeoff: the container cannot persist a refreshed token, so a very long
-# container session may eventually need a restart rather than refreshing in
-# place. That is the intended trade — a container must not be able to log the
-# host out.
+# .credentials.json IS mounted read-write, deliberately, and unlike .claude.json
+# above. The sandbox is the primary place agents run here — not the host app —
+# so it is the instance that has to be able to refresh in place. Under the
+# previous `:ro` mount every container was capped at whatever life remained on
+# the access token it started with, which a long session outlives.
+#
+# Accepted race: refresh tokens are single-use, and each instance decides to
+# refresh from an in-memory snapshot taken at ITS OWN startup — nothing re-reads
+# the file, so a fresher expiresAt on disk does not suppress a peer's refresh.
+# Two instances both live across an expiry will both try to redeem the same
+# token; the first wins, the second is left holding a burned one and must
+# /login. A host started AFTER a container refresh is fine — it loads the
+# rotated token from disk. So the exposure is narrow but real: host and
+# container running concurrently across an expiry boundary. The trade accepted
+# here — the inverse of the .claude.json one — is that the host may be the
+# loser. Don't leave host Claude Code logged in beside a long container session.
 #
 # Conversation history (session transcripts + auto memory) is stored in
 # ~/.claude/projects/<encoded-cwd>/ — NOT in .claude.json — so with --rm it
@@ -200,7 +210,7 @@ $runArgs = @(
     '-v', ("{0}:/workspace" -f $Workspace),
     '-w', '/workspace',
     '-v', ("{0}:/home/agent/.claude.json" -f $claudeJsonCopy),
-    '-v', ("{0}:/home/agent/.claude/.credentials.json:ro" -f $credsFile),
+    '-v', ("{0}:/home/agent/.claude/.credentials.json" -f $credsFile),
     '-v', ("{0}:/home/agent/.claude/projects" -f $historyDir),
     '-v', 'pm-cache:/home/agent/.npm',
     '-v', 'pnpm-store-cache:/home/agent/.pnpm-store'

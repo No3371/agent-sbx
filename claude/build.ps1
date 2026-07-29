@@ -22,6 +22,7 @@ param(
     [switch]$LoadToPodman,     # after Tar export, run `podman load -i <tar>`
     [switch]$SkipPrepare,
     [switch]$NoCache,
+    [switch]$CachedClaude,     # reuse the cached Claude Code layer instead of re-resolving latest
     [string[]]$Enable,
     [string[]]$Disable,
     [string]$Dockerfile = 'Dockerfile.slim',
@@ -102,10 +103,24 @@ foreach ($language in @('go', 'dotnet', 'python')) {
     $buildArgs += '--build-arg'
     $buildArgs += "INSTALL_$($language.ToUpperInvariant())=$([int]($language -in $enabledLanguages))"
 }
+
+# Claude Code is installed unpinned, so its layer would otherwise resolve
+# "latest" once and cache forever. Feed the ARG a changing value to force a
+# re-resolve on every build. Only Dockerfile.slim declares the ARG — the sbx
+# Dockerfile inherits Claude Code from its base image, so skip it there rather
+# than emit an unconsumed-build-arg warning.
+$declaresCachebust = (Get-Content -Raw -LiteralPath $dockerfilePath) -match '(?m)^\s*ARG\s+CLAUDE_CODE_CACHEBUST\b'
+if ($declaresCachebust -and -not $CachedClaude) {
+    $buildArgs += '--build-arg'
+    $buildArgs += "CLAUDE_CODE_CACHEBUST=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+}
 if ($NoCache) { $buildArgs += '--no-cache' }
 $buildArgs += $root
 
 Write-Host "==> optional languages: $($enabledLanguages -join ', ')"
+if ($declaresCachebust) {
+    Write-Host "==> Claude Code: $(if ($CachedClaude) { 'cached layer reused' } else { 'forcing latest' })"
+}
 Write-Host "==> $Engine $($buildArgs -join ' ')"
 & $Engine @buildArgs
 if ($LASTEXITCODE -ne 0) { throw "$Engine build failed ($LASTEXITCODE)" }

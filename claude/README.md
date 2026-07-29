@@ -30,6 +30,26 @@ base, for sbx use) is still there — pass `-Dockerfile Dockerfile` to build tha
 ./build.ps1 -Image docker.io/<user>/cc-custom:v1 -Dockerfile Dockerfile -Push   # sbx variant, podman build + push
 ```
 
+### Claude Code freshness
+
+Claude Code is installed unpinned and re-resolved on every `Dockerfile.slim` build:
+`build.ps1` feeds `--build-arg CLAUDE_CODE_CACHEBUST=<epoch>` so the layer cannot
+go stale. Without it, `npm install -g @anthropic-ai/claude-code` resolves "latest"
+the first time the layer is built and then hits the Docker cache indefinitely —
+the image silently keeps shipping whatever version was current that day.
+
+That layer sits after the agent-browser and Playwright browser downloads, so
+re-resolving costs one npm install rather than a Chrome/Chromium re-download.
+
+```powershell
+./build.ps1 -Image cc-custom:v1 -CachedClaude    # reuse the cached layer, faster rebuild
+```
+
+The sbx `Dockerfile` inherits Claude Code from `docker/sandbox-templates:claude-code`
+and has no install step to bust — it stays as old as the local base image until
+`docker pull docker/sandbox-templates:claude-code`, and then only as fresh as
+upstream's last rebuild.
+
 ### Optional language features
 
 Claude selects `go`, `dotnet`, and `python`; all three are installed by default.
@@ -55,9 +75,15 @@ Without sbx (Win10) — from any project directory:
 
 Mounts the current directory as `/workspace` and launches `claude` interactively.
 The wrapper bind-mounts host OAuth from `%USERPROFILE%\.claude\.credentials.json`
-so the container uses the same subscription-backed account as host Claude Code.
-Run `/login` on the host first if that file does not exist. Project/session
-metadata persists via `%USERPROFILE%\.claude.json`.
+read-write, so the container uses the same subscription-backed account as host
+Claude Code *and* can refresh the token in place during a long session. Run
+`/login` on the host first if that file does not exist.
+
+`~/.claude.json` is **not** shared — the container gets a per-run throwaway copy
+seeded with just the OAuth identity and MCP servers, so it cannot overwrite the
+host's trusted-repo registry. Avoid leaving host Claude Code running beside a
+long container session: refresh tokens are single-use, so whichever instance
+refreshes first leaves the other needing `/login`.
 
 Conversation history (session transcripts + auto memory) persists in the
 project itself: `run.ps1` bind-mounts `<workspace>\.claude\projects` onto

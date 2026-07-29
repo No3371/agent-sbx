@@ -21,11 +21,15 @@ NodeSource Node 25). Adds:
   `skills/`, `themes/`, `prompts/`) copied in by `prepare.ps1` with a filtered
   recursive copy — **no path rewriting needed at all**, unlike opencode/cursor,
   because pi has no MCP config to rewrite (see "No MCP" below)
-- **Node 25** (NodeSource) + npm — pi's own runtime, also drives the
-  `run.ps1` node_modules reinstall
+- **Node 25** (NodeSource) + npm + **pnpm** (npm-installed, mirrors
+  `claude/`/`opencode/`) — pi's own runtime, also drives the `run.ps1`
+  node_modules reinstall
 - **codegraph**, **agent-browser** (browser automation; its Chrome-for-Testing
   browser is baked at build time via `agent-browser install --with-deps`), and
   optional **Go / Python** toolchains
+- Four community **pi packages** installed via `pi install npm:...` —
+  Claude Code-style subagents, a Cursor-models provider, web search/fetch, and
+  context-window management (see "Pi packages" below)
 
 No `docker/sandbox-templates:pi` base exists, so like `opencode/`/`cursor/` (and
 unlike `claude/`/`codex/`) there's no sbx integration here — this is the
@@ -39,6 +43,50 @@ before being added — **APPROVED**, pinned to `0.80.9` (condition: `>=0.78.1`; 
 GHSA advisories exist against earlier versions, all fixed by 0.78.1/0.79.0, all
 predating this pin). See
 [`.projex/2607171400-pi-coding-agent-install-audit.md`](../.projex/2607171400-pi-coding-agent-install-audit.md).
+
+## Pi packages (build-time installed)
+
+Four community pi packages are installed at build time via `pi install npm:...`
+(global, landing in `~/.pi/agent/npm/`), each pinned and audited — see
+`.projex/2607171500..1503-*-install-audit.md`, all **APPROVED**:
+
+| Package | Version | What it adds |
+|---------|---------|---------------|
+| [`@tintinweb/pi-subagents`](https://pi.dev/packages/@tintinweb/pi-subagents) | `0.14.1` | Claude Code-style autonomous sub-agents (`spawn_subagent`/`steer_subagent` tools) |
+| [`pi-cursor-sdk`](https://pi.dev/packages/pi-cursor-sdk) | `0.1.59` | Registers Cursor's `composer-2-5` models as a pi provider, backed by `@cursor/sdk` |
+| [`pi-web-access`](https://pi.dev/packages/pi-web-access) | `0.13.0` | Web search / URL fetch / GitHub clone / PDF & video understanding (`/search`, `web_search`) |
+| [`context-mode`](https://pi.dev/packages/context-mode) | `1.0.169` | Context-window management — sandboxed code execution, FTS5 knowledge base, intent-driven search |
+
+This mirrors a precedent already established in this repo: `claude/Dockerfile`
+build-time-installs `context-mode` the same way (see
+`claude/.projex/2607100235-context-mode-build-time-install-pilot-plan.md` and
+its closed patch) rather than vendoring a host-built copy, specifically because
+context-mode's own hook self-heal logic rewrites host-absolute paths into
+config on every host boot — installing fresh in-container sidesteps that
+entirely. pi has no separate "marketplace" concept the way Claude Code plugins
+do, so the pi-side install is a single `pi install npm:pkg@version` per
+package — no registry-file surgery needed the way `claude/prepare.ps1` needs
+for its plugin identity/payload split.
+
+**context-mode specifics:** it has a `postinstall` script and a
+`better-sqlite3` native dependency (needs a Linux rebuild via
+`build-essential`/`python3`, both present in this image by the time its `pi
+install` layer runs) — review that layer's build output on first build. It
+also carries an **Elastic License 2.0** (source-available, not OSI-approved) —
+no practical restriction for running it as a dev-sandbox tool, but noted since
+every other dependency in this repo is MIT.
+
+**Configuration these packages may need at runtime** (none baked into the
+image — set as needed):
+
+```powershell
+$env:CURSOR_API_KEY = '...'   # pi-cursor-sdk — separate from Cursor Agent CLI/Desktop login
+```
+
+`pi-web-access` works zero-config out of the box (Exa MCP, no key required);
+optional provider keys (`OPENAI_API_KEY`, `BRAVE_API_KEY`, `EXA_API_KEY`, etc.)
+are already in `run.ps1`'s forwarded env-var list from the "Auth" section
+below, or can be set in a project's own `~/.pi/web-search.json`.
 
 ## No MCP
 
@@ -93,9 +141,9 @@ Two toolchains toggle on/off; **both are ON by default**:
 
 `-Enable`/`-Disable` are mutually exclusive; an unknown selector is rejected.
 `node` is **not** a toggle — it's pi's own runtime as well as a baseline
-dependency for codegraph/agent-browser/playwright. No `pnpm` is baked in here
-(mirrors `cursor/`/`codex/`, not `opencode/`) — run pnpm-lockfile projects in
-the `claude`/`opencode` images.
+dependency for codegraph/agent-browser/playwright. `pnpm` is installed
+globally via npm at build time (mirrors `claude/`/`opencode/`'s
+npm-installed-pnpm convention), so pnpm-lockfile projects work here too.
 
 ### agent-browser and codegraph
 
@@ -156,6 +204,8 @@ fresh-login-per-run approach:
   **per-project named volume** (`pi-sessions-<hash-of-workspace-path>`)
   instead, the same hashing technique used for `node_modules` masking below.
 - **npm cache** — `pi-pm-cache` named volume (`~/.npm`).
+- **pnpm store** — `pi-pnpm-store-cache` named volume, relocated off
+  `/workspace` via `pnpm config set store-dir` (same as `claude/`/`opencode/`).
 - **Not persisted:** `trust.json` (project-trust decisions) and
   `models-store.json` (a refreshable model-catalog cache) — both regenerate
   cheaply; a fresh container just re-asks the project-trust prompt once and
@@ -163,9 +213,8 @@ fresh-login-per-run approach:
 
 **`node_modules` masking:** if the host workspace has a `node_modules`, it is
 masked with a per-project named volume (`pi-nmvol-<hash>`) and Linux-native
-deps are reinstalled inside the container (`npm`/`yarn` per lockfile; a
-`pnpm-lock.yaml` project errors visibly — no pnpm baked in here). The host's
-`node_modules` (with its win32-native binaries) is left untouched.
+deps are reinstalled inside the container (`pnpm`/`npm`/`yarn` per lockfile).
+The host's `node_modules` (with its win32-native binaries) is left untouched.
 
 **Security:** `~/.pi/agent/auth.json` carries live provider credentials (API
 keys and/or OAuth tokens). Treat it like an SSH key — never commit or share it.
