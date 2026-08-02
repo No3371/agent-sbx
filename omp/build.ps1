@@ -1,4 +1,4 @@
-# Build the custom Pi sandbox template with podman.
+# Build the custom Pi sandbox template with podman or docker.
 #
 # Output modes (pick one):
 #   default          — image stays in the selected engine's local store only
@@ -27,7 +27,8 @@ param(
     [string]$Dockerfile = 'Dockerfile',
     [string]$Engine = 'podman',
     [string]$HostPiDir  = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.pi\agent
-    [string]$Destination = ''   # passed through to prepare.ps1; default: <repo>/context/.pi/agent
+    [string]$Destination = '',   # passed through to prepare.ps1; default: <repo>/context/.pi/agent
+    [string]$OMPPin = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,7 +74,7 @@ $loadTargets = @()
 if ($LoadToDocker) { $loadTargets += 'docker' }
 if ($LoadToPodman) { $loadTargets += 'podman' }
 if ($loadTargets.Count -gt 0 -and -not $Tar) { throw "-LoadToDocker/-LoadToPodman requires -Tar <path>" }
-$enabledLanguages = Resolve-LanguageSelection -Enable $Enable -Disable $Disable -Supported @('go','python') -EnableSpecified ($PSBoundParameters.ContainsKey('Enable')) -DisableSpecified ($PSBoundParameters.ContainsKey('Disable'))
+$enabledLanguages = Resolve-LanguageSelection -Enable $Enable -Disable $Disable -Supported @('go', 'dotnet') -EnableSpecified ($PSBoundParameters.ContainsKey('Enable')) -DisableSpecified ($PSBoundParameters.ContainsKey('Disable'))
 
 # Single-quote guard only matters when retag-tar.ps1 will be invoked.
 # (retag-tar.ps1 embeds the tar path in a sh heredoc — single-quote injection risk)
@@ -98,7 +99,7 @@ $dockerfilePath = if ([System.IO.Path]::IsPathRooted($Dockerfile)) { $Dockerfile
 if (-not (Test-Path $dockerfilePath)) { throw "Dockerfile not found: $dockerfilePath" }
 
 $buildArgs = @('build', '-t', $Image, '-f', $dockerfilePath)
-foreach ($language in @('go','python')) {
+foreach ($language in @('go', 'dotnet')) {
     $buildArgs += '--build-arg'
     $buildArgs += "INSTALL_$($language.ToUpperInvariant())=$([int]($language -in $enabledLanguages))"
 }
@@ -107,6 +108,11 @@ $buildArgs += $root
 
 Write-Host "==> optional languages: $(if ($enabledLanguages) { $enabledLanguages -join ', ' } else { 'none' })"
 Write-Host "==> $Engine $($buildArgs -join ' ')"
+
+Write-Host "Building on-my-pi as base image"
+& $Engine build -t oh-my-pi/pi:dev "https://github.com/can1357/oh-my-pi.git#$OMPPin"
+if ($LASTEXITCODE -ne 0) { throw "$Engine build -t oh-my-pi/pi:dev failed ($LASTEXITCODE)" }
+
 & $Engine @buildArgs
 if ($LASTEXITCODE -ne 0) { throw "$Engine build failed ($LASTEXITCODE)" }
 

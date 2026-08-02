@@ -22,3 +22,5 @@ pi/*-custom
 .claude
 .codegraph
 opencode/.opencode
+omp/context
+omp/sbx-omp

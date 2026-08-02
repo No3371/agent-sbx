@@ -1,17 +1,7 @@
-# Run the baked pi-custom image without sbx.
-#
 # Mounts the current directory as the container workspace and drops into
-# `pi` interactively. Persists auth by bind-mounting the single host auth file
-# (~/.pi/agent/auth.json — pi's own documented credential-storage location,
-# 0600 perms, same class of file as opencode's auth.json) rather than the
-# whole ~/.pi/agent dir, which would shadow the container's baked settings/
-# extensions/skills.
+# `pi` interactively.
 #
-# First run: authenticate once inside the container (`/login` in interactive
-# mode, or set a provider API key env var on the host — see "Auth" below); the
-# token/key lands in the native host auth.json and persists across --rm.
-#
-# Persists across --rm: provider auth (host ~/.pi/agent/auth.json), per-project
+# Persists across --rm: per-project
 # session history (named volume keyed by a hash of the workspace path — pi
 # organizes sessions by working directory, and the container's cwd is always
 # /workspace, so a single shared volume would bleed session history across
@@ -21,13 +11,10 @@
 # node_modules left untouched). trust.json and the models-store.json cache are
 # NOT persisted — they regenerate cheaply (a fresh container just re-asks
 # project trust / re-fetches model catalogs).
-#
-# SECURITY: ~/.pi/agent/auth.json carries live provider credentials (API keys
-# and/or OAuth tokens). Treat it like an SSH key — never commit or share it.
 
 [CmdletBinding()]
 param(
-    [string]$Image     = 'pi-custom:v1',
+    [string]$Image     = 'omp-custom:v1',
     [string]$Engine    = 'docker',
     [string]$Workspace = $PWD.Path
 )
@@ -59,21 +46,8 @@ try {
     # $tz stays $null and the container keeps defaulting to UTC as before.
 } catch { }
 
-# --- Auth: bind-mount the single host auth.json file (pi's documented,
-# 0600-permissioned credential store) so /login persists across --rm. ---
-$agentDir = Join-Path $env:USERPROFILE '.pi\agent'
-$authFile = Join-Path $agentDir 'auth.json'
-if (-not (Test-Path $agentDir)) { New-Item -ItemType Directory -Force $agentDir | Out-Null }
-if (-not (Test-Path $authFile)) {
-    # BOM-less write: PS5.1's `Set-Content -Encoding utf8` prefixes a UTF-8
-    # BOM, which can make a strict JSON parser choke on `{}` before the first
-    # real write.
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($authFile, '{}', $utf8NoBom)
-}
-
 # Per-project session isolation: pi stores all session history under
-# ~/.pi/agent/sessions/, organized by working directory. Since the container's
+# ~/.omp/agent/sessions/, organized by working directory. Since the container's
 # cwd is always /workspace regardless of which host project is mounted, a
 # single shared volume for that directory would mix every project's history
 # together. Hash the host workspace path (same technique as the node_modules
@@ -87,9 +61,7 @@ $sessionsVol = "pi-sessions-$sessionHash"
 # when the host actually has one do we mask it with a per-project NAMED
 # volume (empty on first run) and install Linux-native deps inside —
 # namespaced `pi-nmvol-` so it never shares the claude/opencode/cursor/codex
-# templates' volume for the same workspace (per-suite isolation). A fresh
-# named volume mounts root:root while we run as agent, so chown it before the
-# empty-check. Absent -> plain bind-mount.
+# templates' volume for the same workspace (per-suite isolation).
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
 if ($maskNodeModules) {
@@ -97,7 +69,7 @@ if ($maskNodeModules) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant())
     $hash  = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-','').Substring(0,12).ToLower()
     $nmVol = "pi-nmvol-$hash"
-    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi; "
+    $nmInstall = "if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi; "
 }
 
 # Forward whichever provider credential env vars are set on the host. Never
@@ -140,22 +112,14 @@ $runArgs = @(
     'run', '-it', '--rm',
     '-v', ("{0}:/workspace" -f $Workspace),
     '-w', '/workspace',
-    '-v', ("{0}:/home/agent/.pi/agent/auth.json" -f $authFile),
-    '-v', "${sessionsVol}:/home/agent/.pi/agent/sessions",
-    '-v', 'pi-pm-cache:/home/agent/.npm',
-    '-v', 'pi-pnpm-store-cache:/home/agent/.pnpm-store'
+    '-v', "${sessionsVol}:/root/.omp/agent/sessions",
+    '-v', 'pi-pm-cache:/root/.npm',
+    '-v', 'pi-pnpm-store-cache:/root/.pnpm-store'
 )
 if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 $runArgs += $envForward
-
-# Fresh named volumes (auth.json's parent dir already exists from the image;
-# the sessions, npm cache, and pnpm store volumes do not) mount root:root while
-# we run as agent — chown before pi/npm/pnpm try to write there. pnpm
-# otherwise defaults its store into /workspace, so relocate it to the HOME
-# volume, same as claude/opencode.
-$pmSetup = "sudo chown agent:agent /home/agent/.pi/agent/sessions /home/agent/.npm /home/agent/.pnpm-store 2>/dev/null; pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true; "
 
 # codegraph has no --target=pi (see skills/codegraph/SKILL.md) — pi has no MCP
 # client to wire a server into anyway, so there is no `codegraph install`
@@ -164,8 +128,14 @@ $pmSetup = "sudo chown agent:agent /home/agent/.pi/agent/sessions /home/agent/.n
 # `;` not `&&`: a codegraph hiccup (e.g. no network) must not block pi.
 $bootstrap = $pmSetup + $nmInstall +
              "test -d .codegraph || codegraph init; " +
-             "exec pi"
-$runArgs += @($Image, 'sh', '-lc', $bootstrap)
+             "exec /usr/local/bin/omp launch"
+
+$runArgs += @(
+    '--entrypoint', '/usr/bin/tini',
+    $Image,
+    '--',
+    'sh', '-lc', $bootstrap
+)
 
 Write-Host "==> $Engine $($runArgs -join ' ')"
 & $Engine @runArgs
