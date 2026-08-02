@@ -1,6 +1,7 @@
 # Shared Base Image Suite (`base/`) for Debian-Based Sandbox Templates
 
 > **Status:** Ready
+> **Reviewed:** 2026-08-02 — 2608022303-sbx-base-image-suite-review.md — Verdict: Abandon
 > **Created:** 2026-07-27
 > **Author:** agent (Claude)
 > **Source:** Direct request ← F4 of 2607271757-prepare-build-run-optimization-eval.md

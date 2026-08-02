@@ -1,10 +1,10 @@
 # Migrate opencode/ onto the Shared Base Image
 
-> **Status:** Ready
+> **Status:** Abandoned (Provider Invalidated)
 > **Created:** 2026-07-27
 > **Author:** agent (Claude)
 > **Source:** Direct request ← F4 of 2607271757-prepare-build-run-optimization-eval.md (root .projex)
-> **Related Projex:** 2607271806-sbx-base-image-suite-plan.md (provider, root .projex) | 2607271807-pi-cursor-base-migration-plan.md (sibling, root .projex)
+> **Related Projex:** 2607271806-sbx-base-image-suite-plan.md (provider; abandoned) | 2607271807-pi-cursor-base-migration-plan.md (abandoned) | 2608022245-remove-cursor-suite-plan.md (removes a former base consumer) | 2608022245-retire-docker-sbx-product-plan.md (reserves `agent-sbx-base` for any future re-plan)
 > **Worktree:** Yes
 
 ---
