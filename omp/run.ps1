@@ -14,7 +14,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Image     = 'omp-custom:v1',
+    [string]$Image     = 'sbx-omp:v1',
     [string]$Engine    = 'docker',
     [string]$Workspace = $PWD.Path
 )

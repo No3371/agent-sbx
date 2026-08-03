@@ -1,4 +1,4 @@
-# Build the custom Pi sandbox template with podman or docker.
+# Build oh-my-pi sandbox with personal state from the host with podman or docker.
 #
 # Output modes (pick one):
 #   default          — image stays in the selected engine's local store only
@@ -12,9 +12,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Image,            # e.g. omp-custom:v1
+    [string]$Image,            # e.g. sbx-omp:v1
 
-    [string]$Tar,              # optional path to export tar (e.g. .\pi-custom.tar)
+    [string]$Tar,              # optional path to export tar (e.g. .\sbx-omp.tar)
     [switch]$Retag,            # after Tar export, rewrite localhost/-prefixed manifest tags
     [switch]$LoadToDocker,     # after Tar export, run `docker load -i <tar>`
     [switch]$LoadToPodman,     # after Tar export, run `podman load -i <tar>`
@@ -66,7 +66,7 @@ function Resolve-LanguageSelection {
 
 # Input validation
 if ($Image -match '<user>') {
-    throw "Replace <user> in -Image with your registry username (e.g. docker.io/yourname/pi-custom:v1)."
+    throw "Replace <user> in -Image with your registry username (e.g. docker.io/yourname/sbx-omp:v1)."
 }
 $loadTargets = @()
 if ($LoadToDocker) { $loadTargets += 'docker' }
