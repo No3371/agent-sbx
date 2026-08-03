@@ -16,7 +16,8 @@
 param(
     [string]$Image     = 'sbx-omp:v1',
     [string]$Engine    = 'docker',
-    [string]$Workspace = $PWD.Path
+    [string]$Workspace = $PWD.Path,
+    [switch]$GPU
 )
 
 $ErrorActionPreference = 'Stop'
@@ -119,6 +120,7 @@ $runArgs = @(
 if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
+if ($GPU) { $runArgs += @('--gpus', 'all') }
 $runArgs += $envForward
 
 # codegraph has no --target=pi (see skills/codegraph/SKILL.md) — pi has no MCP

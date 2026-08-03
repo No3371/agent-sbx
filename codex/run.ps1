@@ -13,7 +13,8 @@
 param(
     [string]$Image     = 'codex-custom:v1',
     [string]$Engine    = 'docker',
-    [string]$Workspace = $PWD.Path
+    [string]$Workspace = $PWD.Path,
+    [switch]$GPU
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,6 +73,7 @@ $runArgs = @(
 if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
+if ($GPU) { $runArgs += @('--gpus', 'all') }
 
 # codegraph install wires the MCP server into ~/.codex/config.toml; codegraph
 # init builds the /workspace graph on first run (guarded by .codegraph/ so it

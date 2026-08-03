@@ -78,6 +78,7 @@ param(
     [string]$Image     = 'cc-custom:v1',
     [string]$Engine    = 'docker',
     [string]$Workspace = $PWD.Path,
+    [switch]$GPU,
     [switch]$EnableBgIsolation,
     [switch]$DangerouslySkipPermissions,
     [string]$Prompt,
@@ -218,6 +219,7 @@ $runArgs = @(
 if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
 if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
+if ($GPU) { $runArgs += @('--gpus', 'all') }
 
 # Disable background-agent worktree isolation unless explicitly enabled.
 # jq creates the worktree object if the baked settings.json lacks one.
