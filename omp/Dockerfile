@@ -33,15 +33,15 @@ RUN set -eux; \
     # Verify npm version:
     npm -v; \
     npm i -g --ignore-scripts "@colbymchenry/codegraph@${CODEGRAPH_VERSION}"; \
-    for cmd in bun node npm npx codegraph; do \
-        ln -sf "$(command -v "$cmd")" "/usr/local/bin/$cmd"; \
-    done; \
     bun install -g pnpm@latest; \
     bun install -g --ignore-scripts \
         "agent-browser@${AGENT_BROWSER_VERSION}" \
         "playwright@${PLAYWRIGHT_VERSION}"; \
     bun pm -g untrusted; \
     bun pm -g trust agent-browser; \
+    for cmd in bun node npm npx codegraph pnpm; do \
+        ln -sf "$(command -v "$cmd")" "/usr/local/bin/$cmd"; \
+    done; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     omp --version; codegraph --version; agent-browser --version; playwright --version; (cd /tmp && pnpm --version);
