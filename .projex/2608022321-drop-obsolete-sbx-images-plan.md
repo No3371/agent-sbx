@@ -1,6 +1,6 @@
 # Drop obsolete sbx-derived images
 
-> **Status:** Ready
+> **Status:** In Progress
 > **Author:** agent (plan-projex, orchestrated run)
 > **Source:** Direct request — "Drop obsolete images (Look at those where both Dockerfile and Dockerfile.Slim exist) using docker.sbx the docker product - we build our own images now."
 > **Related Projex:** 2608022327-drop-obsolete-sbx-derived-images-plan-redteam.md (revision trigger; Fix Issues) | 2608021410-retire-sbx-legacy-plan.md (broader blocked draft; not a dependency) | 2607060236-run-images-without-sbx-plan.md | 2607061530-run-images-without-sbx-walkthrough.md | 2607081815-dockerfile-slim-guide.md
