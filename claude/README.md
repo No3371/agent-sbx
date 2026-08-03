@@ -66,6 +66,7 @@ Direct Docker/Podman launch (Windows 10+) — from any project directory:
 ```
 
 Mounts the current directory as `/workspace` and launches `claude` interactively.
+
 The wrapper bind-mounts host OAuth from `%USERPROFILE%\.claude\.credentials.json`
 read-write, so the container uses the same subscription-backed account as host
 Claude Code *and* can refresh the token in place during a long session. Run
@@ -81,6 +82,11 @@ Conversation history (session transcripts + auto memory) persists in the
 project itself: `run.ps1` bind-mounts `<workspace>\.claude\projects` onto
 `/home/agent/.claude/projects` in the container, so history travels with the
 project instead of living only in the host's global `~/.claude`.
+
+### GPU
+
+Pass `-GPU` to expose all host GPUs to the container (`--gpus all`). Docker or
+Podman must already have its GPU runtime configured.
 
 **Security:** `.claude.json`, `.claude\.credentials.json`, and the project's
 `.claude\projects\` history folder can carry live OAuth tokens or sensitive

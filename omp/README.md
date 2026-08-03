@@ -139,6 +139,11 @@ The host timezone is forwarded as `TZ` when PowerShell can resolve an IANA
 name. Windows PowerShell 5.1 has no IANA conversion, so under it the container
 runs on UTC.
 
+### GPU
+
+Pass `-GPU` to expose all host GPUs to the container (`--gpus all`). Docker or
+Podman must already have its GPU runtime configured.
+
 ### Auth
 
 > **The build bakes host provider credentials into the image.** OMP keeps

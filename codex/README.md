@@ -44,6 +44,11 @@ Mounts the current directory as `/workspace` and launches `codex --dangerously-b
 Authenticate with device auth inside the ephemeral container on each run;
 no host credentials are mounted or persisted by `run.ps1`.
 
+### GPU
+
+Pass `-GPU` to expose all host GPUs to the container (`--gpus all`). Docker or
+Podman must already have its GPU runtime configured.
+
 Use from any project dir without retyping the repo path — add to your
 PowerShell profile (`$PROFILE`):
 

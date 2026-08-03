@@ -66,7 +66,7 @@ Exact-copy status is not universal. `rm-guard/rm-guard.sh` is byte-identical acr
 
 1. **Prepare boundary:** Windows PowerShell reads agent-owned host config, filters it into a suite-local `context/` subtree, and performs suite-specific portability transforms where implemented. Default source/destination parameters are explicit (`codex/prepare.ps1:20-24`; `claude/prepare.ps1:22-26`; `opencode/prepare.ps1:17-21`; `omp/prepare.ps1:22-26`).
 2. **Build boundary:** `build.ps1` accepts mandatory `-Image` and common `-Tar`, `-Retag`, `-LoadToDocker`, `-LoadToPodman`, `-SkipPrepare`, `-NoCache`, `-Enable`, `-Disable`, `-Dockerfile`, and `-Engine` controls. It invokes `prepare.ps1` unless skipped (`codex/build.ps1:13-29,87-93`; equivalent parameter/preparation blocks at `claude/build.ps1:13-30,88-94`, `opencode/build.ps1:13-29,87-93`, `omp/build.ps1:13-30,88-94`). Unsupported language selectors fail rather than becoming silent no-ops; supported catalogs vary.
-3. **Run boundary:** `run.ps1` accepts image, engine, and workspace; defaults workspace to the caller's current directory; launches `run -it --rm`; bind-mounts it to `/workspace`; sets container cwd `/workspace`; then starts the suite agent (`codex/run.ps1:12-17,66-88`; `claude/run.ps1:76-85,208-220`; `opencode/run.ps1:25-30,132-155`; `omp/run.ps1:15-20,111-137`).
+3. **Run boundary:** `run.ps1` accepts image, engine, workspace, and opt-in `-GPU`; defaults workspace to the caller's current directory; launches `run -it --rm`; bind-mounts it to `/workspace`; sets container cwd `/workspace`; `-GPU` appends `--gpus all`; then starts the suite agent (`codex/run.ps1:12-17,66-89`; `claude/run.ps1:76-87,208-222`; `opencode/run.ps1:25-31,132-156`; `omp/run.ps1:15-21,111-138`).
 
 ### O3 — Host and engine setup
 

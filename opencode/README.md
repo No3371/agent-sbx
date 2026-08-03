@@ -99,6 +99,11 @@ interactively. It uses your native OpenCode login from
 inside the container (`opencode auth login`) if that file is absent. Your saved
 model selection also follows from `%USERPROFILE%\.local\state\opencode`.
 
+### GPU
+
+Pass `-GPU` to expose all host GPUs to the container (`--gpus all`). Docker or
+Podman must already have its GPU runtime configured.
+
 **Persistent state across `--rm`:**
 
 - **Session history** — opencode stores all sessions in a single SQLite DB
