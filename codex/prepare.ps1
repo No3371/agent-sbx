@@ -95,6 +95,8 @@ function Sync-StageTree(
         }
         Write-Host "[prepare] $label -> $verdict"
     } else {
+        # Match the old clean rebuild when an optional host tree disappears.
+        if (Test-Path $destination) { Remove-Item $destination -Recurse -Force }
         Write-Host "[prepare] no $label dir on host"
     }
 
@@ -105,7 +107,9 @@ function Sync-StageTree(
 # --- skills/: stage with .system/ excluded, seed .keep placeholder ---
 $skillsSrc = Join-Path $HostCodexDir 'skills'
 $skillsDst = Join-Path $Destination 'skills'
-Sync-StageTree 'skills' $skillsSrc $skillsDst @('.system')
+$skillsSystemDst = Join-Path $skillsDst '.system'
+if (Test-Path $skillsSystemDst) { Remove-Item $skillsSystemDst -Recurse -Force }
+Sync-StageTree 'skills' $skillsSrc $skillsDst @((Join-Path $skillsSrc '.system'))
 
 # --- vendor_imports/skills/: staged with recursive excludes ---
 $vendorSrc = Join-Path $HostCodexDir 'vendor_imports\skills'
