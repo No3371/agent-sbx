@@ -69,11 +69,11 @@ opencode, cursor, pi all start `FROM debian:bookworm-slim` and independently ins
 
 Cold rebuilds re-download: apt packages, npm tarballs, Go tarball (~70MB), Chrome/Chromium. `--mount=type=cache` on `/var/cache/apt`, npm cache, and a download dir would make cache-busted rebuilds mostly-local. Podman ≥4 supports BuildKit-style cache mounts via buildah. Lower priority if F1/F2/F4 land (cache-busting becomes rarer).
 
-### F7 — prepare.ps1: 3 full tree walks + per-file recursive copy — **Medium confidence, low stakes** — **[PATCHED — claude/ only]**
+### F7 — prepare.ps1: 3 full tree walks + per-file recursive copy — **Medium confidence, low stakes** — **[PATCHED — claude + codex]**
 
-> **Patched:** `2607291244-incremental-context-staging-patch.md` — claude/prepare.ps1 converted to `robocopy /MIR`. Magnitude now measured, not structural: cold 22.7s → 3.3s, warm (unchanged tree) 2.1s, output byte-identical (2351 files, 0 manifest diffs). "Low stakes" was wrong — the per-file `Copy-Item` loop was the whole cost. `codex/prepare.ps1` (61M, the larger suite) still open.
+> **Patched:** `2607291244-incremental-context-staging-patch.md` converted `claude/prepare.ps1` to `robocopy /MIR`: cold 22.7s → 3.3s, warm 2.1s, output byte-identical (2351 files, 0 manifest diffs). `2608030651-codex-incremental-context-staging-patch.md` applied equivalent mirroring to Codex's three staged trees; PowerShell fixture A/B: 11 files, 0 byte-manifest diffs on cold, unchanged, changed+purged, and missing-optional-tree runs. "Low stakes" was wrong for Claude; Codex host-scale timing remains unmeasured.
 
-[pi/prepare.ps1](pi/prepare.ps1): walk 1 = recursive per-file `Copy-ItemFiltered`; walk 2 = CRLF normalize ([:107](pi/prepare.ps1:107)); walk 3 = credential rescan ([:117](pi/prepare.ps1:117)). For pi/cursor (tiny trees) irrelevant; for claude (39M) / codex (61M) with thousands of small files, `robocopy /MIR /XD ... /XF ...` for the copy + one combined post-walk would cut prepare from tens of seconds to seconds. Only worth doing in the big suites, and only if prepare latency actually annoys (unmeasured — Low confidence on magnitude).
+[pi/prepare.ps1](pi/prepare.ps1): walk 1 = recursive per-file `Copy-ItemFiltered`; walk 2 = CRLF normalize ([:107](pi/prepare.ps1:107)); walk 3 = credential rescan ([:117](pi/prepare.ps1:117)). For pi/cursor (tiny trees), conversion remains irrelevant. Claude (39M) and Codex (61M) now use `robocopy /MIR /XD ... /XF ...` for staged payloads plus a post-mirror credential sweep.
 
 ### F8 — run.ps1 startup: bakeable bootstrap steps — **High confidence, small**
 
