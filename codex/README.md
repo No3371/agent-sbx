@@ -138,13 +138,13 @@ baked into the image.
 - `skills/.system/` — internal system skills, not user content
 - `plugins/data/` and plugin staging dirs — host runtime state
 - `**/.git/`, `**/.github/`, and `**/node_modules/` inside staged skills/vendor/plugins content — recursive, any depth
-- Recursive copy skips anything matching credential patterns (`*.key`, `*.pem`, `*.token`, `*.credentials`, `secrets.json`, `*.p12`, `*.pfx`, `token.json`, `auth.json`); a final scan removes any unexpected matches
+- `robocopy` excludes anything matching credential patterns (`*.key`, `*.pem`, `*.token`, `*.credentials`, `secrets.json`, `*.p12`, `*.pfx`, `token.json`, `auth.json`); a post-mirror scan removes any matching file left by an older staged context
 
 ## Notes
 
 - `skills/`, `vendor_imports/skills/`, and `plugins/cache/` are seeded with a `.keep` placeholder so BuildKit `COPY` succeeds even when the host dirs are empty or absent.
 - If `AGENTS.md` is absent on the host, an empty stub is written so the Dockerfile `COPY` never fails.
-- `$Destination` is recreated clean on each `prepare.ps1` run — there is no incremental staging.
+- Staging is incremental: `robocopy /MIR` compares size + write time and transfers only changes while purging source-removed entries; exit codes below 8 are success.
 - `.projex/closed/` contains completed project documents (design plans, walkthroughs).
   Active development notes are not committed. See `SECURITY.md` for the responsible
   disclosure path.

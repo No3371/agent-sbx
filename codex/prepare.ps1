@@ -29,11 +29,8 @@ if (-not (Test-Path $HostCodexDir)) {
     throw "Host .codex dir not found: $HostCodexDir"
 }
 
-# Recreate $Destination clean on each run so stale entries from a prior layout
-# never linger in the build context.
-if (Test-Path $Destination) {
-    Remove-Item $Destination -Recurse -Force
-}
+# Keep the root stable; staged trees below mirror independently so unchanged
+# payloads are not deleted and recopied on every run.
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 
 # BOMless UTF-8 writer — TOML & Markdown both expected without BOM by their
@@ -48,7 +45,7 @@ function Write-LinesNoBom([string]$path, [string[]]$lines) {
 }
 
 # Filename patterns that must never be baked into the image, regardless of
-# directory.
+# directory. Handed to robocopy /XF below, which matches them at every depth.
 $credentialExcludePatterns = @(
     'auth.json', 'token.json', 'secrets.json',
     '*.key', '*.pem', '*.token', '*.credentials',
@@ -56,103 +53,91 @@ $credentialExcludePatterns = @(
 )
 $excludedDirectoryNames = @('.github', '.git', 'node_modules')
 
-function Test-CredentialFileName([string]$name) {
-    foreach ($pat in $credentialExcludePatterns) {
-        if ($name -like $pat) { return $true }
-    }
-    return $false
+# Staging is incremental. robocopy compares size + write time in native code
+# and transfers only changes; /MIR also purges destination entries removed from
+# the source, preserving the old clean-rebuild result without paying for a full
+# delete and per-file PowerShell copy.
+#
+# robocopy exit codes: 0 = nothing to do | 1 = copied | 2 = purged extras |
+# 3 = both | >= 8 = real failure. Everything below 8 is success.
+if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) {
+    throw "robocopy not found on PATH — required for staging."
+}
+# PS 7.3+ can promote a nonzero native exit code to a terminating error under
+# $ErrorActionPreference='Stop'. Robocopy's success codes are often nonzero.
+if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+    $PSNativeCommandUseErrorActionPreference = $false
 }
 
-function Copy-ItemFiltered([string]$sourcePath, [string]$destinationDir) {
-    $item = Get-Item -LiteralPath $sourcePath -Force
+$rcFlags = @('/MIR', '/MT:16', '/R:1', '/W:1', '/NFL', '/NDL', '/NP', '/NJH', '/NJS')
 
-    if ($item.PSIsContainer) {
-        if ($excludedDirectoryNames -contains $item.Name) {
-            Write-Host "[prepare] skipping excluded dir: $($item.FullName)"
-            return
-        }
+function Sync-StageTree(
+    [string]$label,
+    [string]$source,
+    [string]$destination,
+    [string[]]$additionalExcludedDirectories = @()
+) {
+    $rcExcludeDirs = @('/XD') + $excludedDirectoryNames + $additionalExcludedDirectories
+    # .keep exists only in the destination. /XF also shields it from /MIR purge.
+    $rcExcludeFiles = @('/XF', '.keep') + $credentialExcludePatterns
 
-        $target = Join-Path $destinationDir $item.Name
-        New-Item -ItemType Directory -Path $target -Force | Out-Null
-        $children = Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
-        foreach ($child in $children) {
-            Copy-ItemFiltered $child.FullName $target
+    if (Test-Path $source) {
+        robocopy $source $destination @rcFlags @rcExcludeDirs @rcExcludeFiles | Out-Null
+        $rc = $LASTEXITCODE
+        $global:LASTEXITCODE = 0
+        if ($rc -ge 8) { throw "robocopy failed staging ${label}: exit $rc" }
+        $verdict = switch ($rc) {
+            0       { 'unchanged' }
+            1       { 'updated' }
+            2       { 'stale entries purged' }
+            3       { 'updated + purged' }
+            default { "exit $rc" }
         }
-        return
+        Write-Host "[prepare] $label -> $verdict"
+    } else {
+        Write-Host "[prepare] no $label dir on host"
     }
 
-    if (Test-CredentialFileName $item.Name) {
-        Write-Warning "[prepare] CREDENTIAL RISK: skipping $($item.FullName)"
-        return
-    }
-
-    Copy-Item -LiteralPath $item.FullName -Destination $destinationDir -Force
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    Set-Content -Path (Join-Path $destination '.keep') -Value '' -Encoding UTF8
 }
 
 # --- skills/: stage with .system/ excluded, seed .keep placeholder ---
-$skillsDst = Join-Path $Destination 'skills'
-New-Item -ItemType Directory -Path $skillsDst -Force | Out-Null
-Set-Content -Path (Join-Path $skillsDst '.keep') -Value '' -Encoding UTF8
-
 $skillsSrc = Join-Path $HostCodexDir 'skills'
-if (Test-Path $skillsSrc) {
-    $entries = Get-ChildItem -Path $skillsSrc -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -ne '.system' }
-    if ($entries) {
-        Write-Host "[prepare] mapping skills ($($entries.Count) entries; excluding .system/)"
-        foreach ($e in $entries) {
-            Copy-ItemFiltered $e.FullName $skillsDst
-        }
-    } else {
-        Write-Host "[prepare] skills on host is empty (after .system/ exclusion)"
-    }
-} else {
-    Write-Host "[prepare] no skills dir on host"
-}
+$skillsDst = Join-Path $Destination 'skills'
+Sync-StageTree 'skills' $skillsSrc $skillsDst @('.system')
 
 # --- vendor_imports/skills/: staged with recursive excludes ---
-$vendorDst = Join-Path $Destination 'vendor_imports\skills'
-New-Item -ItemType Directory -Path $vendorDst -Force | Out-Null
-Set-Content -Path (Join-Path $vendorDst '.keep') -Value '' -Encoding UTF8
-
 $vendorSrc = Join-Path $HostCodexDir 'vendor_imports\skills'
-if (Test-Path $vendorSrc) {
-    $topEntries = Get-ChildItem -Path $vendorSrc -Force -ErrorAction SilentlyContinue
-    if ($topEntries) {
-        Write-Host "[prepare] mapping vendor_imports/skills ($($topEntries.Count) entries)"
-        foreach ($e in $topEntries) {
-            Copy-ItemFiltered $e.FullName $vendorDst
-        }
-    } else {
-        Write-Host "[prepare] vendor_imports/skills on host is empty"
-    }
-} else {
-    Write-Host "[prepare] no vendor_imports/skills dir on host"
-}
+$vendorDst = Join-Path $Destination 'vendor_imports\skills'
+Sync-StageTree 'vendor_imports/skills' $vendorSrc $vendorDst
 
 # --- plugins/cache/: installed plugin bundles (context-mode, ponytail, bundled
-# browser/chrome, etc.), staged with recursive excludes. Only cache/ is staged — plugins/data/,
+# browser/chrome, etc.). Only cache/ is staged — plugins/data/,
 # .plugin-appserver/, .marketplace-plugin-source-staging/, and
-# .remote-plugin-install-staging/ are machine-local runtime/staging state with
-# no place in a baked image (same rationale as excluding sessions/sqlite
-# above).
-$pluginsCacheDst = Join-Path $Destination 'plugins\cache'
-New-Item -ItemType Directory -Path $pluginsCacheDst -Force | Out-Null
-Set-Content -Path (Join-Path $pluginsCacheDst '.keep') -Value '' -Encoding UTF8
-
+# .remote-plugin-install-staging/ remain host-only runtime/staging state.
 $pluginsCacheSrc = Join-Path $HostCodexDir 'plugins\cache'
-if (Test-Path $pluginsCacheSrc) {
-    $topEntries = Get-ChildItem -Path $pluginsCacheSrc -Force -ErrorAction SilentlyContinue
-    if ($topEntries) {
-        Write-Host "[prepare] mapping plugins/cache ($($topEntries.Count) entries)"
-        foreach ($e in $topEntries) {
-            Copy-ItemFiltered $e.FullName $pluginsCacheDst
+$pluginsCacheDst = Join-Path $Destination 'plugins\cache'
+Sync-StageTree 'plugins/cache' $pluginsCacheSrc $pluginsCacheDst
+
+# /XF prevents credentials entering from the source but also shields matching
+# destination files from /MIR purge. Remove anything left by an older prepare
+# revision before later processing can fail, while retaining the old warning.
+$leaked = Get-ChildItem -Path $Destination -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object { -not $_.PSIsContainer } |
+    Where-Object {
+        $n = $_.Name
+        $matched = $false
+        foreach ($pat in $credentialExcludePatterns) {
+            if ($n -like $pat) { $matched = $true; break }
         }
-    } else {
-        Write-Host "[prepare] plugins/cache on host is empty"
+        $matched
     }
-} else {
-    Write-Host "[prepare] no plugins/cache dir on host"
+if ($leaked) {
+    foreach ($f in $leaked) {
+        Write-Warning "[prepare] CREDENTIAL RISK: removing $($f.FullName) from staged context"
+        Remove-Item $f.FullName -Force
+    }
 }
 
 # Host .sh files may carry CRLF line endings (authored on Windows) — bash
@@ -386,26 +371,6 @@ $configDst = Join-Path $Destination 'config.toml'
 Write-LinesNoBom $configDst $outLines.ToArray()
 Write-Host "[prepare] config.toml rewritten ($($outLines.Count) lines)"
 
-# --- post-copy credential scan over entire $Destination ---
-# Catches anything that slipped through directory-level exclusions (deep
-# nesting inside skills/ or vendor_imports/). Match files by name against the
-# credential pattern list and warn + remove each hit.
-$leaked = Get-ChildItem -Path $Destination -Recurse -Force -ErrorAction SilentlyContinue |
-    Where-Object { -not $_.PSIsContainer } |
-    Where-Object {
-        $n = $_.Name
-        $matched = $false
-        foreach ($pat in $credentialExcludePatterns) {
-            if ($n -like $pat) { $matched = $true; break }
-        }
-        $matched
-    }
-if ($leaked) {
-    foreach ($f in $leaked) {
-        Write-Warning "[prepare] CREDENTIAL RISK: removing $($f.FullName) from staged context"
-        Remove-Item $f.FullName -Force
-    }
-}
 
 Write-Host "[prepare] staged at $Destination"
 Write-Host "[prepare] next: ./build.ps1 -Image <repo>/codex-custom:v1 -Push"
