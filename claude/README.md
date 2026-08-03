@@ -1,38 +1,34 @@
 # Custom Claude Code sandbox template
 
-Extends `docker/sandbox-templates:claude-code` with:
+Builds a self-contained Claude Code image from official `node:25-bookworm-slim` with:
 
-- **Node 25** + **pnpm** (global npm install)
-- **.NET SDK 10**
-- Host `~/.claude/{settings.json, skills, agents, tools, commands, hooks}` mapped into the sandbox (Win paths rewritten to Linux equivalents)
+- **Claude Code**, **Node 25**, **pnpm**, **CodeGraph**, **agent-browser**, and **Playwright + Chromium**
+- Optional **.NET SDK 10**, **Go**, and **Python 3**
+- Host `~/.claude/{settings.json, skills, agents, tools, commands, hooks}` staged with Windows paths rewritten to Linux equivalents
+- In-repo `rm-guard` accident protection for `/workspace/.git`; this is not a security boundary because `agent` retains passwordless sudo
 
-sbx manages OAuth + `~/.claude.json` (sessions, history, plugins, projects) — none of that is baked here.
+OAuth is bind-mounted by `run.ps1`; credentials, sessions, and history are not baked into the image.
 
 ## Prerequisites
 
 - **Windows** — build scripts are PowerShell 5.1; Linux/Mac not yet supported
 - **PowerShell 5.1** — `pwsh` (PowerShell Core 7.x) has known encoding differences; use Windows PowerShell
-- **docker** (or podman) — this template's default workflow is non-sbx + Docker; pass `-Engine podman` to use podman instead
+- **docker** (or podman) — default workflow uses Docker directly; pass `-Engine podman` to use Podman instead
 
 ## Build
 
-Default path is non-sbx: `Dockerfile.slim` (Node slim base, no sbx dependency) built and loaded straight into Docker.
+The canonical `Dockerfile` builds directly from the official Node slim base:
 
 ```powershell
 ./prepare.ps1                                                # stage host .claude payload
 ./build.ps1 -Image cc-custom:v1 -Tar ./cc-custom -Engine docker -LoadToDocker
 ```
 
-`build.ps1` defaults to `-Dockerfile Dockerfile.slim`. The original `Dockerfile` (full `docker/sandbox-templates:claude-code`
-base, for sbx use) is still there — pass `-Dockerfile Dockerfile` to build that one instead:
-
-```powershell
-./build.ps1 -Image docker.io/<user>/cc-custom:v1 -Dockerfile Dockerfile -Push   # sbx variant, podman build + push
-```
+`build.ps1` uses `Dockerfile` by default; no `-Dockerfile` override is required.
 
 ### Claude Code freshness
 
-Claude Code is installed unpinned and re-resolved on every `Dockerfile.slim` build:
+Claude Code is installed unpinned and re-resolved on every canonical `Dockerfile` build:
 `build.ps1` feeds `--build-arg CLAUDE_CODE_CACHEBUST=<epoch>` so the layer cannot
 go stale. Without it, `npm install -g @anthropic-ai/claude-code` resolves "latest"
 the first time the layer is built and then hits the Docker cache indefinitely —
@@ -45,10 +41,6 @@ re-resolving costs one npm install rather than a Chrome/Chromium re-download.
 ./build.ps1 -Image cc-custom:v1 -CachedClaude    # reuse the cached layer, faster rebuild
 ```
 
-The sbx `Dockerfile` inherits Claude Code from `docker/sandbox-templates:claude-code`
-and has no install step to bust — it stays as old as the local base image until
-`docker pull docker/sandbox-templates:claude-code`, and then only as fresh as
-upstream's last rebuild.
 
 ### Optional language features
 
@@ -66,7 +58,7 @@ requirements and cannot be selected.
 
 ## Run
 
-Without sbx (Win10) — from any project directory:
+Direct Docker/Podman launch (Windows 10+) — from any project directory:
 
 ```powershell
 # image must already be in the engine's local store (build.ps1, or `docker load <tar>`)
@@ -124,11 +116,6 @@ either way:
 ccrun -DangerouslySkipPermissions
 ```
 
-Legacy sbx path (requires sbx + Win11):
-
-```powershell
-sbx run --template docker.io/<user>/cc-custom:v1 claude
-```
 
 ## Workspace `node_modules` (Windows host)
 
@@ -168,9 +155,8 @@ Prune the volumes if they accumulate: `docker volume ls -q --filter name=nmvol-`
 ## Layout
 
 ```
-custom_sbx/
-├── Dockerfile.slim                   # default: non-sbx, Node slim base
-├── Dockerfile                        # legacy: sbx, docker/sandbox-templates base
+claude/
+├── Dockerfile                        # canonical self-built Node slim image
 ├── prepare.ps1                       # stages + rewrites host config
 ├── build.ps1                         # docker/podman build + push
 ├── .dockerignore
@@ -200,6 +186,5 @@ It also drops the Windows-only `statusLine` (relies on bash globbing of a `/c/..
 - `.projex/closed/` contains completed project documents (design plans, walkthroughs).
   Active development notes are not committed. See `SECURITY.md` for the responsible
   disclosure path.
-- Base image tag (`docker/sandbox-templates:claude-code`) is floating — rebuilds on
-  different dates may pull a different base. Pin to a digest for fully reproducible
-  builds.
+- Base image tag (`node:25-bookworm-slim`) is mutable; pin to a digest for fully
+  reproducible builds.

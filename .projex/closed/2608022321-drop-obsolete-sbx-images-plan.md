@@ -1,6 +1,6 @@
 # Drop obsolete sbx-derived images
 
-> **Status:** Complete (Execution Blocked; Branch Abandoned)
+> **Status:** Complete (Runtime Verification Deferred to Windows)
 > **Author:** agent (plan-projex, orchestrated run)
 > **Source:** Direct request — "Drop obsolete images (Look at those where both Dockerfile and Dockerfile.Slim exist) using docker.sbx the docker product - we build our own images now."
 > **Related Projex:** 2608022327-drop-obsolete-sbx-derived-images-plan-redteam.md (revision trigger; Fix Issues) | 2608021410-retire-sbx-legacy-plan.md (broader blocked draft; not a dependency) | 2607060236-run-images-without-sbx-plan.md | 2607061530-run-images-without-sbx-walkthrough.md | 2607081815-dockerfile-slim-guide.md
@@ -8,6 +8,7 @@
 > **Log:** 2608022321-drop-obsolete-sbx-images-log.md
 > **Completed:** 2026-08-03
 > **Walkthrough:** 2608022321-drop-obsolete-sbx-images-walkthrough.md
+> **Recovery:** Product changes recovered from `76df874` and merged on 2026-08-03; mandatory PowerShell/container runtime verification remains deferred to a Windows host.
 
 ---
 

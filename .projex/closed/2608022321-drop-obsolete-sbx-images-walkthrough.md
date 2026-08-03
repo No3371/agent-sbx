@@ -1,21 +1,21 @@
 # Walkthrough: Drop obsolete sbx-derived images
 
-> **Status:** Complete (Execution Blocked; Branch Abandoned)
+> **Status:** Complete (Runtime Verification Deferred to Windows)
 > **Execution Date:** 2026-08-03
 > **Completed By:** agent (orchestrated run)
 > **Source Plan:** 2608022321-drop-obsolete-sbx-images-plan.md
 > **Execution Log:** 2608022321-drop-obsolete-sbx-images-log.md
 > **Execution Branch:** `projex/2608022321-drop-obsolete-sbx-images`
 > **Duration:** 14 minutes (04:56–05:10 UTC)
-> **Result:** Failed — mandatory runtime verification blocked; implementation branch abandoned without merge
+> **Result:** Static cutover recovered and merged; mandatory runtime verification deferred to a Windows host
 
 ---
 
 ## Summary
 
-Execution completed and committed the planned static source cutover on the isolated branch, then stopped at mandatory Step 4 because PowerShell and every plan-permitted container engine were absent. Static work was not accepted as a substitute for image/runtime proof. Caller selected close Option D (Abandon), so no image-definition, build-driver, or README change reached `main`; this walkthrough, plan, log, and resolved red-team record are the surviving lifecycle artifacts.
+Execution completed and committed the planned static source cutover on the isolated branch, then stopped at mandatory Step 4 because PowerShell and every plan-permitted container engine were absent. Static work was not accepted as a substitute for image/runtime proof at the initial close.
 
-No runtime engine, prepared context, manifest, image ref/ID, container, auth attempt, distribution event, credential artifact, or run-owned cleanup target was created.
+The user subsequently directed recovery and closure despite that host limitation. Product changes from `76df874` were recovered and merged; required PowerShell/container runtime verification remains deferred to a Windows host. No runtime engine, prepared context, manifest, image ref/ID, container, auth attempt, distribution event, credential artifact, or run-owned cleanup target was created.
 
 ---
 
@@ -23,13 +23,13 @@ No runtime engine, prepared context, manifest, image ref/ID, container, auth att
 
 | Objective | Execution outcome | Final repository outcome |
 |---|---|---|
-| Preserve rm-guard in both self-built definitions | Complete on execution branch | Discarded with branch |
-| Preserve Codex Playwright CLI + Chromium | Complete on execution branch | Discarded with branch |
-| Promote self-built definitions to canonical `Dockerfile` | Complete on execution branch | Discarded with branch |
-| Align build/docs callers | Complete on execution branch | Discarded with branch |
-| Prove both images through one controlled engine/runtime lineage | Blocked | No approval; no product merge |
+| Preserve rm-guard in both self-built definitions | Complete on execution branch | Recovered and merged; build/runtime proof deferred |
+| Preserve Codex Playwright CLI + Chromium | Complete on execution branch | Recovered and merged; build/runtime proof deferred |
+| Promote self-built definitions to canonical `Dockerfile` | Complete on execution branch | Recovered and merged; build/runtime proof deferred |
+| Align build/docs callers | Complete on execution branch | Recovered and merged; build/runtime proof deferred |
+| Prove both images through one controlled engine/runtime lineage | Blocked | Deferred to a Windows host; not accepted as verified |
 
-Overall product objective: **Failed/no-go**. Static implementation existed at branch commit `76df874`, but plan-required operational evidence was unavailable.
+Overall product objective: **Static cutover merged; runtime verification deferred**. Branch commit `76df874` supplied the recovered static implementation.
 
 ---
 
@@ -183,17 +183,12 @@ Only lifecycle records reached `main`: closed plan, execution log, walkthrough, 
 
 ---
 
-## Recommendations
+## Recovery Closure
 
-### Immediate follow-up
-
-- Re-plan/re-execute only on a host with plan-compatible PowerShell plus one functioning Docker or Podman engine.
-- Run the full controlled prepare/build/immutable-ID/direct-probe/trust/launcher/ledger sequence; do not reuse the abandoned branch's static passes as operational evidence.
-
-### Plan improvement
-
-- Add a hard Step 0 gate for exact PowerShell and selected-engine executable/version/daemon availability before source mutation.
-- Retain the current invalidation, local-only, credential-trust, and sanitized-ledger requirements; they correctly prevented an unverified merge.
+- **Decision:** user directed recovery and closure despite the unavailable Linux-host verification tooling.
+- **Action:** recovered execution commit `76df874`; merged static source changes on 2026-08-03.
+- **Deferred:** PowerShell plus a Docker or Podman engine must be available on Windows before the controlled prepare/build/immutable-ID/direct-probe/trust/launcher/ledger sequence can establish runtime evidence.
+- **Evidence boundary:** recovery did not create runtime artifacts, distributions, auth attempts, or credentials. Static checks recorded by the original execution remain the only completed verification.
 
 ---
 
@@ -201,8 +196,8 @@ Only lifecycle records reached `main`: closed plan, execution log, walkthrough, 
 
 | Document | Close action |
 |---|---|
-| 2608022321-drop-obsolete-sbx-images-plan.md | Terminal close metadata + log/walkthrough links; moved to `closed/` |
-| 2608022321-drop-obsolete-sbx-images-log.md | Terminal blocked/abandoned outcome + walkthrough link; moved to `closed/` |
+| 2608022321-drop-obsolete-sbx-images-plan.md | Closed lifecycle metadata updated with recovery/deferred-runtime qualifier |
+| 2608022321-drop-obsolete-sbx-images-log.md | Historical blocked execution record retained |
 | 2608022327-drop-obsolete-sbx-derived-images-plan-redteam.md | Findings were incorporated into revised plan; linked here and moved to `closed/` |
 | 2608021410-retire-sbx-legacy-plan.md | Broader blocked plan remains active; unrelated pre-existing edit preserved through stash/restore |
 

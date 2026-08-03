@@ -25,7 +25,7 @@ param(
     [switch]$CachedClaude,     # reuse the cached Claude Code layer instead of re-resolving latest
     [string[]]$Enable,
     [string[]]$Disable,
-    [string]$Dockerfile = 'Dockerfile.slim',
+    [string]$Dockerfile = 'Dockerfile',
     [string]$Engine = 'podman',
     [string]$HostClaudeDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.claude
     [string]$Destination   = ''    # passed through to prepare.ps1; default: <repo>/context/.claude
@@ -105,10 +105,9 @@ foreach ($language in @('go', 'dotnet', 'python')) {
 }
 
 # Claude Code is installed unpinned, so its layer would otherwise resolve
-# "latest" once and cache forever. Feed the ARG a changing value to force a
-# re-resolve on every build. Only Dockerfile.slim declares the ARG — the sbx
-# Dockerfile inherits Claude Code from its base image, so skip it there rather
-# than emit an unconsumed-build-arg warning.
+# "latest" once and cache forever. Feed the ARG a changing value when the
+# selected Dockerfile declares it; skip the argument for definitions that do
+# not consume it.
 $declaresCachebust = (Get-Content -Raw -LiteralPath $dockerfilePath) -match '(?m)^\s*ARG\s+CLAUDE_CODE_CACHEBUST\b'
 if ($declaresCachebust -and -not $CachedClaude) {
     $buildArgs += '--build-arg'

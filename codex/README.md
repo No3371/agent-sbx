@@ -1,11 +1,12 @@
 # Custom Codex CLI sandbox template
 
-Extends `docker/sandbox-templates:codex` with:
+Builds a self-contained Codex CLI image from official `node:25-bookworm-slim` with:
 
-- **Node 24 LTS** (upgrades base Node 20)
-- Host `~/.codex/{config.toml, AGENTS.md, skills/, vendor_imports/skills/, plugins/cache/}` mapped into the sandbox (Win paths rewritten, machine-local sections stripped)
+- **Codex CLI**, **Node 25**, **Python 3**, **CodeGraph**, **agent-browser**, and **Playwright + Chromium**
+- Host `~/.codex/{config.toml, AGENTS.md, skills/, vendor_imports/skills/, plugins/cache/}` staged with Windows paths rewritten and machine-local sections stripped
+- In-repo `rm-guard` accident protection for `/workspace/.git`; this is not a security boundary because `agent` retains passwordless sudo
 
-sbx manages OAuth + `auth.json` at runtime; nothing credential-related is baked into the image.
+`run.ps1` performs device authentication at startup; credentials are not baked or mounted.
 
 ## Prerequisites
 
@@ -13,20 +14,15 @@ sbx manages OAuth + `auth.json` at runtime; nothing credential-related is baked 
 - **PowerShell 5.1** — `pwsh` (PowerShell Core 7.x) has known encoding differences; use Windows PowerShell
 - **podman** (or docker) — pass `-Engine docker` to use Docker instead
 
-## Build with podman
+## Build
 
 ```powershell
 ./prepare.ps1                                                # stage host .codex payload
-./build.ps1 -Image docker.io/<user>/codex-custom:v1 -Push    # podman build + push
+./build.ps1 -Image codex-custom:v1                           # podman by default
 ```
 
-`build.ps1` defaults to `-Engine podman`. Pass `-Engine docker` to use Docker.
-
-To try the no-sbx slim image, use the alternate Dockerfile:
-
-```powershell
-./build.ps1 -Image codex-custom:slim -Dockerfile Dockerfile.slim -Engine docker
-```
+`build.ps1` uses the canonical `Dockerfile` and Podman by default. Pass
+`-Engine docker` to use Docker; no `-Dockerfile` override is required.
 
 ### Optional language features
 
@@ -37,7 +33,7 @@ are fixed shared requirements.
 
 ## Run
 
-Without sbx (Win10) — from any project directory:
+Direct Docker/Podman launch (Windows 10+) — from any project directory:
 
 ```powershell
 # image must already be in the engine's local store (build.ps1, or `docker load <tar>`)
@@ -57,11 +53,6 @@ function codexrun { & "<repo-path>\codex\run.ps1" @args }
 
 Then just run `codexrun` from any project directory.
 
-Legacy sbx path (requires sbx + Win11):
-
-```powershell
-sbx run --template docker.io/<user>/codex-custom:v1 codex --dangerously-bypass-approvals-and-sandbox
-```
 
 ## Workspace `node_modules` (Windows host)
 
@@ -140,7 +131,7 @@ baked into the image.
 
 ## What `prepare.ps1` excludes (never staged)
 
-- `auth.json` — credentials; sbx manages auth at runtime
+- `auth.json` — credentials; runtime device authentication creates ephemeral container state
 - `sessions/`, `session_index.jsonl`, `logs_*.sqlite*`, `state_*.sqlite*`, `sqlite/` — host session/history state
 - `cache/`, `.tmp/`, `.sandbox/`, `.sandbox-bin/`, `.sandbox-secrets/` — host-only runtime dirs
 - `memories/`, `.codex-global-state.json*`, `models_cache.json`, `installation_id`, `cap_sid`, `.personality_migration` — machine-local state
@@ -157,6 +148,5 @@ baked into the image.
 - `.projex/closed/` contains completed project documents (design plans, walkthroughs).
   Active development notes are not committed. See `SECURITY.md` for the responsible
   disclosure path.
-- Base image tag (`docker/sandbox-templates:codex`) is floating — rebuilds on
-  different dates may pull a different base. Pin to a digest for fully reproducible
-  builds.
+- Base image tag (`node:25-bookworm-slim`) is mutable; pin to a digest for fully
+  reproducible builds.

@@ -1,72 +1,82 @@
-# Custom Codex CLI sandbox template
-#   - Node 24 LTS (upgrades base Node 20)
-#   - @openai/codex pre-installed in base
-#   - Host ~/.codex/{config.toml,AGENTS.md,skills/,vendor_imports/skills/}
-#     staged by prepare.ps1 (Win paths rewritten, Win/marketplace/project sections stripped)
-#
-# sbx supplies host OAuth + auth at runtime; nothing credential-related is baked.
-# Build context expects ./context/.codex/{...} populated by prepare.ps1.
+# Self-built Codex CLI image
+#   - Starts from official Node 25 bookworm-slim
+#   - Installs latest @openai/codex from npm
+#   - Recreates only the agent user/env pieces needed by run.ps1
+#   - run.ps1 performs device auth at startup; no credentials are baked or mounted
 
-FROM docker/sandbox-templates:codex
+FROM node:25-bookworm-slim
 
 USER root
 
-ARG NODE_MAJOR=24
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
+    PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH \
+    BASH_ENV=/etc/sandbox-persistent.sh
+
 # Pinned, not @latest — a shared build artifact should track an audited
 # version explicitly (see .projex/2607081900-codegraph-integration-audit.md).
 ARG CODEGRAPH_VERSION=1.3.0
-# agent-browser: browser automation CLI for agents (github.com/vercel-labs/agent-browser).
-# Pinned for the same reason as codegraph above.
+# Pinned alongside CodeGraph so browser automation is reproducible.
 ARG AGENT_BROWSER_VERSION=0.31.1
-# Playwright: baked so JS/TS/Node projects that use it for browser testing don't
-# hit a cold `playwright install` mid-task. Pinned for the same reason as above.
+# Playwright: browser test automation library, baked with Chromium for offline use.
 ARG PLAYWRIGHT_VERSION=1.61.1
 
-# Upgrade Node 20 (base) → Node 24 via NodeSource. Purge existing apt/nvm Node
-# first to prevent dual-binary PATH confusion (same rationale as claude/ variant).
+# Core tools plus native build tooling for plugin deps. Deliberately omits
+# heavyweight extras like Docker CLI, Java, man-db, Ubuntu dev bundles, and clipboard bridge.
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg apt-transport-https; \
-    apt-get purge -y nodejs || true; \
-    rm -rf /home/agent/.nvm /usr/local/bin/node /usr/local/bin/npm \
-           /usr/local/bin/npx /usr/local/lib/node_modules; \
-    install -d -m 0755 /etc/apt/keyrings; \
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
-        > /etc/apt/sources.list.d/nodesource.list; \
-    apt-get update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        nodejs python3 build-essential; \
-    # codegraph: semantic code-intelligence MCP server for agents.
-    # agent-browser: browser automation CLI for agents (Chrome via CDP).
-    # playwright: browser test automation library.
-    npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}" "playwright@${PLAYWRIGHT_VERSION}"; \
+        ca-certificates curl git jq less openssh-client procps ripgrep sudo tini tzdata \
+        python3 build-essential; \
     apt-get clean; \
-    rm -rf /var/lib/apt/lists/*; \
-    node --version | grep -E "^v24\." \
-        || { echo "ERROR: expected Node 24, got $(node --version)"; exit 1; }; \
-    codegraph --version; agent-browser --version; playwright --version
+    rm -rf /var/lib/apt/lists/*
 
-# agent-browser install: downloads Chrome for Testing + installs Linux system
-# libs (--with-deps, needs root/apt). HOME is overridden to the agent's home
-# so Chrome and config land there directly instead of under /root, avoiding a
-# second download once we drop to USER agent below.
+# node:*-slim already has UID 1000 as user `node`; rename it so
+# /home/agent paths match run.ps1 mounts and baked config.
+RUN set -eux; \
+    if id node >/dev/null 2>&1; then \
+        usermod --login agent --home /home/agent --move-home --shell /bin/bash node; \
+        groupmod --new-name agent node; \
+    else \
+        useradd --create-home --uid 1000 --shell /bin/bash agent; \
+    fi; \
+    usermod -aG sudo agent; \
+    echo "agent ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/agent; \
+    chmod 0440 /etc/sudoers.d/agent; \
+    mkdir -p /home/agent/.local/bin /home/agent/.local/share /home/agent/.local/state \
+             /home/agent/.codex /usr/local/share/npm-global; \
+    chown -R agent:agent /home/agent; \
+    touch /etc/sandbox-persistent.sh; \
+    chmod 0644 /etc/sandbox-persistent.sh; \
+    printf '%s\n' \
+        'export PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH' \
+        'if [ -f /etc/sandbox-persistent.sh ]; then . /etc/sandbox-persistent.sh; fi' \
+        'export BASH_ENV=/etc/sandbox-persistent.sh' \
+        > /etc/profile.d/sandbox-persistent.sh; \
+    printf '%s\n' \
+        'export PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH' \
+        'if [ -f /etc/sandbox-persistent.sh ]; then . /etc/sandbox-persistent.sh; fi' \
+        'export BASH_ENV=/etc/sandbox-persistent.sh' \
+        > /home/agent/.bashrc; \
+    chown agent:agent /home/agent/.bashrc
+
+RUN set -eux; \
+    npm config set update-notifier false; \
+    npm install -g @openai/codex "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}" "playwright@${PLAYWRIGHT_VERSION}"; \
+    ln -sf /usr/local/share/npm-global/bin/codex /home/agent/.local/bin/codex; \
+    ln -sf /usr/local/share/npm-global/bin/codegraph /home/agent/.local/bin/codegraph; \
+    ln -sf /usr/local/share/npm-global/bin/agent-browser /home/agent/.local/bin/agent-browser; \
+    ln -sf /usr/local/share/npm-global/bin/playwright /home/agent/.local/bin/playwright; \
+    chown -h agent:agent /home/agent/.local/bin/codex /home/agent/.local/bin/codegraph /home/agent/.local/bin/agent-browser /home/agent/.local/bin/playwright; \
+    node --version; npm --version; codex --version; codegraph --version; agent-browser --version; playwright --version
+
 RUN HOME=/home/agent agent-browser install --with-deps \
  && chown -R agent:agent /home/agent/.agent-browser
 
-# Playwright's own Chromium build + Linux system libs (--with-deps, needs
-# root/apt), baked at build time rather than left for a project's first
-# `playwright install` to do cold. HOME override lands it in the agent's cache
-# instead of /root, avoiding a second download after USER agent below.
+# Playwright's own Chromium build + Linux system libs. HOME override lands it
+# in the agent's cache instead of /root and avoids a runtime download.
 RUN HOME=/home/agent playwright install --with-deps chromium \
  && chown -R agent:agent /home/agent/.cache/ms-playwright
 
-# sbx bind-mounts /workspace with the host's ownership, tripping git's
-# dubious-ownership guard; and a fresh container has no git identity, so the
-# agent's first commit fails until one is set. System config is the
-# lowest-precedence layer, so any user/global config set later still wins.
 RUN git config --system --add safe.directory '*' \
  && git config --system core.autocrlf input \
  && git config --system user.name 'agent' \
@@ -103,25 +113,15 @@ WORKDIR /home/agent
 COPY --chown=agent:agent context/.codex/config.toml        /home/agent/.codex/config.toml
 COPY --chown=agent:agent context/.codex/AGENTS.md          /home/agent/.codex/AGENTS.md
 COPY --chown=agent:agent context/.codex/skills/            /home/agent/.codex/skills/
-# agent-browser discovery stub — Dockerfile-owned (not host-synced), so it
-# survives regardless of what's on the host's ~/.codex/skills.
 COPY --chown=agent:agent skills/agent-browser/             /home/agent/.codex/skills/agent-browser/
 COPY --chown=agent:agent context/.codex/vendor_imports/    /home/agent/.codex/vendor_imports/
-
-# Installed plugin bundles (context-mode, ponytail, bundled browser/chrome,
-# etc.) referenced by config.toml's [plugins.*] entries.
 COPY --chown=agent:agent context/.codex/plugins/           /home/agent/.codex/plugins/
 
-# prepare.ps1 skips node_modules/ from plugins/cache/ (it's built on the
-# host — Windows — and native .node addons like context-mode's better-sqlite3
-# won't load in this Linux container). Reinstall for every plugin dir that
-# ships a package.json so native deps get rebuilt for Linux instead of
-# silently missing. build-essential (above) covers node-gyp compilation for
-# any addon without a prebuilt Linux binary.
 RUN set -eux; \
     for d in $(find /home/agent/.codex/plugins/cache -maxdepth 8 -name package.json -printf '%h\n'); do \
         echo "[build] npm install: $d"; \
         (cd "$d" && npm install --no-audit --no-fund); \
     done
 
+ENTRYPOINT ["tini", "--"]
 CMD ["codex", "--dangerously-bypass-approvals-and-sandbox"]
