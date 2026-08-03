@@ -589,4 +589,4 @@ Write-JsonNoBom (Join-Path $Destination 'settings.json')       $settings
 Write-JsonNoBom (Join-Path $Destination 'settings.local.json') $settings
 
 Write-Host "[prepare] staged at $Destination"
-Write-Host "[prepare] next: ./build.ps1 -Image <repo>/cc-custom:v1 -Push"
+Write-Host "[prepare] next: ./build.ps1 -Image cc-custom:v1"

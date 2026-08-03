@@ -37,7 +37,7 @@ runtime; nothing credential-related is baked into the image.
 
 ```powershell
 ./prepare.ps1                                                    # stage host ~/.config/opencode
-./build.ps1 -Image docker.io/<user>/opencode-custom:v1 -Push     # podman build + push
+./build.ps1 -Image opencode-custom:v1                             # podman build
 ```
 
 `build.ps1` runs `prepare.ps1` automatically unless `-SkipPrepare` is passed,
@@ -176,7 +176,7 @@ container, so `prepare.ps1`:
   skips the rewrite (with a warning) if `opencode.json` is JSONC (has comments).
 
 If `opencode.json` has a `permission` block, `prepare.ps1` **warns** (it is baked
-as-is, not stripped) so you can review the auto-approval posture before `-Push`.
+as-is, not stripped) so you can review the auto-approval posture before build/export.
 
 ## Notes
 

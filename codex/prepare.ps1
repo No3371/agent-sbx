@@ -377,4 +377,4 @@ Write-Host "[prepare] config.toml rewritten ($($outLines.Count) lines)"
 
 
 Write-Host "[prepare] staged at $Destination"
-Write-Host "[prepare] next: ./build.ps1 -Image <repo>/codex-custom:v1 -Push"
+Write-Host "[prepare] next: ./build.ps1 -Image codex-custom:v1"

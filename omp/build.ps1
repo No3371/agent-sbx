@@ -5,7 +5,6 @@
 #   -Tar <path>      — also export to a tar
 #   -LoadToDocker    — load the exported tar into Docker (requires -Tar)
 #   -LoadToPodman    — load the exported tar into Podman (requires -Tar)
-#   -Push            — push to a registry
 #
 # podman save may emit `localhost/<image>:<tag>` in the manifest for bare image
 # names. Use -Retag if you need to strip that prefix before loading elsewhere.
@@ -13,10 +12,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Image,            # e.g. pi-custom:v1 (local) or docker.io/<user>/pi-custom:v1 (push)
+    [string]$Image,            # e.g. omp-custom:v1
 
     [string]$Tar,              # optional path to export tar (e.g. .\pi-custom.tar)
-    [switch]$Push,
     [switch]$Retag,            # after Tar export, rewrite localhost/-prefixed manifest tags
     [switch]$LoadToDocker,     # after Tar export, run `docker load -i <tar>`
     [switch]$LoadToPodman,     # after Tar export, run `podman load -i <tar>`
@@ -122,11 +120,6 @@ if ($Tar) {
     if ($LASTEXITCODE -ne 0) { throw "$Engine save failed ($LASTEXITCODE)" }
 }
 
-if ($Push) {
-    Write-Host "==> $Engine push $Image"
-    & $Engine push $Image
-    if ($LASTEXITCODE -ne 0) { throw "$Engine push failed ($LASTEXITCODE)" }
-}
 
 # Retag the tar's manifest when explicitly requested.
 if ($doRetag) {
@@ -159,9 +152,7 @@ if ($loadTargets.Count -gt 0) {
     Write-Host "Run:   ./run.ps1 -Image $Image -Engine <docker|podman>"
 } elseif ($Tar) {
     Write-Host "Next:  docker load -i $Tar  OR  podman load -i $Tar"
-} elseif ($Push) {
-    Write-Host "Pushed: $Image"
 } else {
     Write-Host "Note:  image is only in $Engine's local store."
-    Write-Host "       Re-run with -Tar <path> [-LoadToDocker|-LoadToPodman] or -Push."
+    Write-Host "       Re-run with -Tar <path> [-LoadToDocker|-LoadToPodman]."
 }

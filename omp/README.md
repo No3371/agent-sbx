@@ -24,7 +24,7 @@ upstream repo into a local base image (`oh-my-pi/pi:dev`) and this suite's
 
 The image runs as **root** and the agent's config tree lives at `/root/.omp`.
 **The build bakes host provider credentials into the image** — read the warning
-under "Auth" before you push or share one.
+under "Auth" before you build or share one.
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ under "Auth" before you push or share one.
 
 ```powershell
 ./prepare.ps1                                             # stage host ~/.omp
-./build.ps1 -Image docker.io/<user>/omp-custom:v1 -Push   # podman build + push
+./build.ps1 -Image omp-custom:v1                         # podman build
 ```
 
 `build.ps1` runs `prepare.ps1` automatically unless `-SkipPrepare` is passed.
@@ -146,8 +146,8 @@ runs on UTC.
 > `auth_credential_blocks`), and `prepare.ps1`'s exclusion list matches
 > *filenames* — `auth.json`, `*.token`, `*.key` and friends — so it does not
 > catch them: `agent.db` and its `-wal` sidecar are staged and `COPY`ed in.
-> Treat any image built here as a secret. Do not `-Push` it to a registry you
-> do not control, and do not share an exported tar.
+> Treat any image built here as a secret. Do not publish it to a registry, and
+> do not share an exported tar.
 
 - `run.ps1` bind-mounts no credential file, so the exposure is in the image
   layers rather than at runtime.

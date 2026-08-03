@@ -90,7 +90,7 @@ Prune the volumes if they accumulate: `docker volume ls -q --filter name=nmvol-`
 custom_sbx/codex/
 ├── Dockerfile
 ├── prepare.ps1                       # stages + rewrites host config
-├── build.ps1                         # podman build + push
+├── build.ps1                         # podman build + export/load
 ├── retag-tar.ps1                     # strip localhost/ prefix from saved tar
 ├── .dockerignore
 └── context/

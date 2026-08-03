@@ -104,8 +104,7 @@ foreach ($f in $shFiles) {
 # (F3), drop the server if any element is still a Windows drive path after
 # rewrite. `permission` (a documented opencode key controlling auto-approval)
 # is NOT stripped here — the plan scoped permission-posture out — but its
-# presence is surfaced with a warning so a `-Push` operator isn't blind to it
-# (F1, minimal touch).
+# presence is surfaced before build/export (F1, minimal touch).
 function Convert-OpencodeWinPath([string]$p) {
     if ([string]::IsNullOrEmpty($p)) { return $p }
     # host opencode config dir → container path
@@ -146,7 +145,7 @@ if (Test-Path $ocJson) {
     }
     if ($cfg) {
         if ($cfg.PSObject.Properties['permission']) {
-            Write-Warning "[prepare] opencode.json has a 'permission' block — it controls auto-approval and is baked as-is (not stripped). Review before -Push."
+            Write-Warning "[prepare] opencode.json has a 'permission' block — it controls auto-approval and is baked as-is (not stripped). Review before building or sharing an exported tar."
         }
         if ($cfg.PSObject.Properties['mcp']) {
             $dropped = [System.Collections.Generic.List[string]]::new()
@@ -207,4 +206,4 @@ if ($leaked) {
 }
 
 Write-Host "[prepare] staged at $Destination"
-Write-Host "[prepare] next: ./build.ps1 -Image <repo>/opencode-custom:v1 -Push"
+Write-Host "[prepare] next: ./build.ps1 -Image opencode-custom:v1"
