@@ -28,7 +28,7 @@ Deletion cannot be blind: legacy definitions contain two capabilities absent fro
 ### Success Criteria
 
 - [ ] `claude/` and `codex/` each contain exactly one canonical `Dockerfile`; neither contains `Dockerfile.slim`.
-- [ ] Canonical files use `node:25-bookworm-slim` (claude) and `node:24-bookworm-slim` (codex); neither uses `docker/sandbox-templates`.
+- [ ] Both canonical images use `node:25-bookworm-slim`; neither uses `docker/sandbox-templates`.
 - [ ] Both canonical images retain the in-repo `rm-guard` wiring and its build-time positive/negative self-test.
 - [ ] Codex canonical image retains global Playwright CLI + baked Chromium behavior from the retired definition.
 - [ ] `claude/build.ps1` and `codex/build.ps1` build the canonical file with no `-Dockerfile` argument.
@@ -55,7 +55,7 @@ Deletion cannot be blind: legacy definitions contain two capabilities absent fro
 | Suite | Legacy definition | Self-built definition | Build default | Relevant parity gap |
 |---|---|---|---|---|
 | claude | `claude/Dockerfile` → `docker/sandbox-templates:claude-code` | `claude/Dockerfile.slim` → `node:25-bookworm-slim` | `Dockerfile.slim` | self-built file lacks `rm-guard`; Playwright already present |
-| codex | `codex/Dockerfile` → `docker/sandbox-templates:codex` | `codex/Dockerfile.slim` → `node:24-bookworm-slim` | `Dockerfile` (legacy) | self-built file lacks `rm-guard`, Playwright CLI, and Playwright Chromium |
+| codex | `codex/Dockerfile` → `docker/sandbox-templates:codex` | `codex/Dockerfile.slim` → `node:25-bookworm-slim` | `Dockerfile` (legacy) | self-built file lacks `rm-guard`, Playwright CLI, and Playwright Chromium |
 
 Both self-built definitions already recreate the `agent` user, paths, shell hooks, config copy, agent-browser install, suite CLI, and `tini` entrypoint needed by `run.ps1`. Their headers explicitly describe omitted heavyweight base extras as intentional. The cutover therefore promotes the existing self-built design rather than reproducing Docker's sandbox-template base.
 
@@ -221,10 +221,10 @@ FROM node:25-bookworm-slim
 FROM docker/sandbox-templates:codex
 
 # Before: codex/Dockerfile.slim
-FROM node:24-bookworm-slim
+FROM node:25-bookworm-slim
 
 # After: codex/Dockerfile
-FROM node:24-bookworm-slim
+FROM node:25-bookworm-slim
 ```
 
 **Rationale:** `.slim` only distinguished the self-built alternative from Docker's larger sandbox-template base. Once the obsolete image is gone, conventional `Dockerfile` is unambiguous and existing default build behavior remains simple.
@@ -443,6 +443,7 @@ No data migration or planned remote image deletion exists. Rollback proves track
 ## Revision Log
 
 - **2026-08-02:** Kept the sound self-built cutover; replaced ambiguous Step 4, evidence, invalidation, and rollback contracts with one-engine immutable lineage, controlled minimal preparation, separate no-volume/browser probes and manual launcher trust gate, local-only distribution rules, redacted ledger, and scoped cleanup — trigger: 2608022327-drop-obsolete-sbx-derived-images-plan-redteam.md § Bottom Line, § Critical Findings 1–16, and § Remediation.
+- **2026-08-02:** Standardized the planned Codex self-built base from `node:24-bookworm-slim` to `node:25-bookworm-slim`, matching Claude — trigger: direct requirement, "sync both to node25".
 
 ---
 
