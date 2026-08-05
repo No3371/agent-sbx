@@ -136,8 +136,9 @@ interactively under `tini`. The bootstrap reinstalls Linux-native
 then `exec`s the agent.
 
 The host timezone is forwarded as `TZ` when PowerShell can resolve an IANA
-name. Windows PowerShell 5.1 has no IANA conversion, so under it the container
-runs on UTC.
+name. Windows PowerShell 5.1 has no IANA conversion API, so the script falls
+back to a static CLDR windowsZones mapping table; only if the host zone is
+missing from that table too does the container run on UTC (with a warning).
 
 ### GPU
 
