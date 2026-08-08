@@ -19,7 +19,7 @@ param(
     [Parameter(Mandatory)] [string] $Tar,
     [Parameter(Mandatory)] [string] $OldTag,
     [Parameter(Mandatory)] [string] $NewTag,
-    [string] $Engine = 'podman'
+    [string] $Engine = 'docker'
 )
 
 if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) {

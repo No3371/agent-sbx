@@ -23,7 +23,7 @@ param(
     [string[]]$Enable,
     [string[]]$Disable,
     [string]$Dockerfile = 'Dockerfile',
-    [string]$Engine = 'podman',
+    [string]$Engine = 'docker',
     [string]$HostPiDir  = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.pi\agent
     [string]$Destination = '',   # passed through to prepare.ps1; default: <repo>/context/.pi/agent
     [string]$OMPPin = ""

@@ -23,7 +23,7 @@ param(
     [string[]]$Enable,
     [string[]]$Disable,
     [string]$Dockerfile = 'Dockerfile',
-    [string]$Engine = 'podman',
+    [string]$Engine = 'docker',
     [string]$HostOpencodeDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.config\opencode
     [string]$Destination     = ''    # passed through to prepare.ps1; default: <repo>/context/.config/opencode
 )

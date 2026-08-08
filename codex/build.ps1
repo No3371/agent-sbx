@@ -23,7 +23,7 @@ param(
     [string[]]$Enable,
     [string[]]$Disable,
     [string]$Dockerfile = 'Dockerfile',
-    [string]$Engine = 'podman',
+    [string]$Engine = 'docker',
     [string]$HostCodexDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.codex
     [string]$Destination  = ''    # passed through to prepare.ps1; default: <repo>/context/.codex
 )

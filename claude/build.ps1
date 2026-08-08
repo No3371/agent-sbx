@@ -24,7 +24,7 @@ param(
     [string[]]$Enable,
     [string[]]$Disable,
     [string]$Dockerfile = 'Dockerfile',
-    [string]$Engine = 'podman',
+    [string]$Engine = 'docker',
     [string]$HostClaudeDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.claude
     [string]$Destination   = ''    # passed through to prepare.ps1; default: <repo>/context/.claude
 )
