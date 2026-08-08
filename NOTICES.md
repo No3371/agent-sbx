@@ -87,6 +87,17 @@ installs are responsible for verifying the licenses of that additional content.
 - **License:** MIT
 - **Source:** https://github.com/nicobailon/pi-web-access
 
+## pi-mcp-adapter
+
+- **Version:** `2.21.1` (pinned; installed via `pi install npm:...` in `pi/`)
+- **License:** MIT
+- **Source:** https://github.com/nicobailon/pi-mcp-adapter
+- **Note:** MCP bridge (single proxy tool, on-demand discovery). Stores MCP
+  OAuth tokens only in an OS credential store and fails closed without one —
+  no token files exist to bake or mount; the container runs no secret
+  service, so in-sandbox MCP auth is bearer/env-based via `run.ps1`'s
+  provider env forwarding.
+
 ## Cursor CLI (cursor-agent)
 
 - **Version:** unpinned — installed at build time in `cursor/` via the
