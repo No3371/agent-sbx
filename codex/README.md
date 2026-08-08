@@ -23,6 +23,9 @@ Builds a self-contained Codex CLI image from official `node:25-bookworm-slim` wi
 
 `build.ps1` uses the canonical `Dockerfile` and Podman by default. Pass
 `-Engine docker` to use Docker; no `-Dockerfile` override is required.
+The image lands directly in the engine's local store — `-Tar`/`-Retag`/
+`-LoadToDocker`/`-LoadToPodman` are only for moving it to the *other*
+engine's store (Docker and Podman don't share one) or to another machine.
 
 ### Optional language features
 

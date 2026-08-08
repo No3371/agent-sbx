@@ -21,10 +21,26 @@ The canonical `Dockerfile` builds directly from the official Node slim base:
 
 ```powershell
 ./prepare.ps1                                                # stage host .claude payload
-./build.ps1 -Image cc-custom:v1 -Tar ./cc-custom -Engine docker -LoadToDocker
+./build.ps1 -Image cc-custom:v1 -Engine docker
 ```
 
 `build.ps1` uses `Dockerfile` by default; no `-Dockerfile` override is required.
+The built image lands directly in the engine's local store, ready for
+`run.ps1` — no export/load step when you build and run with the same engine.
+
+### Cross-engine or machine transfer
+
+`-Tar` is only for moving the image between image stores: Docker and Podman
+keep separate stores, and a tar is also the registry-free way to another
+machine. (Historically the tar fed `sbx template load`; that runtime is
+retired.) `-Retag` strips the `localhost/` prefix that `podman save` writes
+into the manifest for bare image names — only needed when a podman-built tar
+will be loaded somewhere that treats `localhost/` as a registry hostname.
+
+```powershell
+# build with podman, hand the image to docker
+./build.ps1 -Image cc-custom:v1 -Engine podman -Tar ./cc-custom -Retag -LoadToDocker
+```
 
 ### Claude Code freshness
 

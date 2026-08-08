@@ -42,6 +42,9 @@ runtime; nothing credential-related is baked into the image.
 
 `build.ps1` runs `prepare.ps1` automatically unless `-SkipPrepare` is passed,
 and defaults to `-Engine podman`. Pass `-Engine docker` to use Docker.
+The image lands directly in the engine's local store — `-Tar`/`-Retag`/
+`-LoadToDocker`/`-LoadToPodman` are only for moving it to the *other*
+engine's store (Docker and Podman don't share one) or to another machine.
 
 ### Optional language features
 

@@ -43,6 +43,9 @@ under "Auth" before you build or share one.
 ```
 
 `build.ps1` runs `prepare.ps1` automatically unless `-SkipPrepare` is passed.
+The image lands directly in the engine's local store — `-Tar`/`-Retag`/
+`-LoadToDocker`/`-LoadToPodman` are only for moving it to the *other*
+engine's store (Docker and Podman don't share one) or to another machine.
 
 ### Base image
 
