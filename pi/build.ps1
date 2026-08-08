@@ -11,8 +11,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Image,            # e.g. sbx-pi:v1
+    [string]$Image = "sbx-pi:v1",            # e.g. sbx-pi:v1
 
     [string]$Tar,              # optional path to export tar (e.g. .\sbx-pi.tar)
     [switch]$Retag,            # after Tar export, rewrite localhost/-prefixed manifest tags
@@ -23,9 +22,9 @@ param(
     [string[]]$Enable,
     [string[]]$Disable,
     [string]$Dockerfile = 'Dockerfile',
-    [string]$Engine = 'podman',
-    [string]$HostOpencodeDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.config\opencode
-    [string]$Destination     = ''    # passed through to prepare.ps1; default: <repo>/context/.config/opencode
+    [string]$Engine = 'docker',
+    [string]$HostPiDir   = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.pi
+    [string]$Destination = ''    # passed through to prepare.ps1; default: <repo>/context/.pi
 )
 
 $ErrorActionPreference = 'Stop'
@@ -87,8 +86,8 @@ if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) {
 if (-not $SkipPrepare) {
     Write-Host "==> prepare.ps1"
     $prepareArgs = @()
-    if ($HostOpencodeDir) { $prepareArgs += '-HostOpencodeDir'; $prepareArgs += $HostOpencodeDir }
-    if ($Destination)     { $prepareArgs += '-Destination';     $prepareArgs += $Destination     }
+    if ($HostPiDir)   { $prepareArgs += '-HostPiDir';   $prepareArgs += $HostPiDir   }
+    if ($Destination) { $prepareArgs += '-Destination'; $prepareArgs += $Destination }
     & (Join-Path $root 'prepare.ps1') @prepareArgs
 }
 

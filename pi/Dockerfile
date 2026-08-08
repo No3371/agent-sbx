@@ -6,15 +6,17 @@
 #   - Node 25 (NodeSource) + pnpm (global npm install); runs as root, like
 #     omp/ (unlike the claude/codex templates' non-root agent user).
 #   - Host ~/.pi (agent/settings.json, agent/models-store.json, skills,
-#     packages, ...) staged by prepare.ps1 (auth.json and other
-#     credential-pattern files excluded).
+#     packages, ...) and ~/.agents/skills (cross-agent skills standard,
+#     auto-loaded by pi as an always-trusted user resource) staged by
+#     prepare.ps1 (auth.json and other credential-pattern files excluded).
 #
 # No docker/sandbox-templates:pi base exists (unlike claude/codex), so there's
 # no sbx integration here — this is the plain-docker path, run via run.ps1.
 # Host auth (~/.pi/agent/auth.json) is bind-mounted at runtime by run.ps1;
 # nothing credential-related is baked into the image.
 #
-# Build context expects ./context/.pi populated by prepare.ps1.
+# Build context expects ./context/.pi and ./context/.agents/skills populated
+# by prepare.ps1.
 
 FROM debian:bookworm-slim
 
@@ -47,7 +49,7 @@ RUN set -eux; \
     for flag in "$INSTALL_GO" "$INSTALL_PYTHON"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        bash ca-certificates curl ripgrep git gnupg jq less openssh-client tini tzdata apt-transport-https; \
+        bash ca-certificates curl ripgrep git gnupg jq less openssh-client sudo tini tzdata apt-transport-https; \
     install -d -m 0755 /etc/apt/keyrings; \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
         | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
@@ -141,6 +143,11 @@ RUN set -eux; \
 
 COPY context/.pi/ /root/.pi/
 
+# Cross-agent skills standard: pi auto-loads ~/.agents/skills (global, always
+# trusted — unlike project-local .agents/skills, which is trust-gated). Staged
+# from host ~/.agents/skills by prepare.ps1.
+COPY context/.agents/skills/ /root/.agents/skills/
+
 # MCP bridge — pi has no built-in MCP support. The adapter exposes one
 # ~200-token proxy tool with on-demand discovery instead of bridging every
 # server's tool definitions into context, and reads standard MCP config
@@ -152,9 +159,9 @@ COPY context/.pi/ /root/.pi/
 # one (this container runs none) — no token files exist to stage or mount;
 # bearer/env auth via run.ps1's env forwarding is the in-sandbox path.
 RUN pi install "npm:pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}"
-RUN pi install "npm:context-mode${CONTEXT_MODE_VERSION}}"
+RUN pi install "npm:context-mode@${CONTEXT_MODE_VERSION}"
 RUN pi install "npm:@tintinweb/pi-subagents@${PI_SUBAGENTS_VERSION}"
-RUN pi install "npm:pi-lens@${PI_LENS_VERSION}}"
+RUN pi install "npm:pi-lens@${PI_LENS_VERSION}"
 
 # Wire codegraph into pi through that MCP bridge (`codegraph install` has no
 # --target=pi): merge a `codegraph serve --mcp` stdio entry — codegraph's own

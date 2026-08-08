@@ -195,9 +195,6 @@ $runArgs = @(
     '-v', 'sbx-pi-pnpm-store-cache:/root/.pnpm-store'
 )
 if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
-# No --userns=keep-id under podman (contrast the agent-user suites): rootless
-# podman already maps container root to the host user, so bind-mount writes
-# come out host-owned; keep-id would shift root into the subuid range instead.
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 if ($GPU) { $runArgs += @('--gpus', 'all') }
 $runArgs += $envForward
