@@ -1,9 +1,14 @@
-# Stages host ~/.config/opencode into ./context/.config/opencode for the build.
+# Stages host opencode payload into the build context:
+#   ~/.config/opencode -> ./context/.config/opencode (opencode.json, AGENTS.md,
+#                         plugin/, skills/, vendored repos, ...)
+#   ~/.agents/skills   -> ./context/.agents/skills   (cross-agent skills standard;
+#                         opencode auto-loads ~/.agents/skills/<name>/SKILL.md)
 #
-# Unlike codex/claude's prepare.ps1, this is a filtered recursive copy — no
-# path rewriting, no section filtering (opencode.json / AGENTS.md / plugin/ /
-# skills/ / vendored repos copied except exclusions). Three exclusions, all reused
-# from the codex/claude prepare.ps1 convention:
+# Staging is INCREMENTAL via robocopy /MIR (same system as claude/codex
+# prepare.ps1): robocopy compares size + write time per file in native code and
+# transfers only what differs, so an unchanged host tree costs a stat sweep
+# instead of a full re-copy. /MIR also purges dest entries whose source is gone.
+# Exclusions (reused from the claude/codex prepare.ps1 convention):
 #   - .git/ and .github/ dirs anywhere in the tree (never belongs in a baked image)
 #   - node_modules/ dirs anywhere in the tree (host-built, breaks native addons
 #     in a Linux container; see README "What prepare.ps1 excludes")
@@ -13,11 +18,16 @@
 # (~/.local/share/opencode/auth.json), which is bind-mounted at runtime by
 # run.ps1 — nothing under ~/.config/opencode is expected to hold secrets, but
 # the scan runs anyway since it's cheap.
+#
+# After staging, opencode.json gets its local MCP `command` arrays rewritten
+# (Win paths -> Linux) — see the section comment below.
 
 [CmdletBinding()]
 param(
-    [string]$HostOpencodeDir = "$env:USERPROFILE\.config\opencode",
-    [string]$Destination     = (Join-Path $PSScriptRoot 'context\.config\opencode')
+    [string]$HostOpencodeDir     = "$env:USERPROFILE\.config\opencode",
+    [string]$HostAgentsSkillsDir = "$env:USERPROFILE\.agents\skills",
+    [string]$Destination         = (Join-Path $PSScriptRoot 'context\.config\opencode'),
+    [string]$SkillsDestination   = (Join-Path $PSScriptRoot 'context\.agents\skills')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,62 +46,67 @@ function Test-CredentialFileName([string]$name) {
     return $false
 }
 
-function Copy-ItemFiltered([string]$sourcePath, [string]$destinationDir) {
-    $item = Get-Item -LiteralPath $sourcePath -Force
-
-    if ($item.PSIsContainer) {
-        if ($excludedDirectoryNames -contains $item.Name) {
-            Write-Host "[prepare] skipping excluded dir: $($item.FullName)"
-            return
-        }
-
-        $target = Join-Path $destinationDir $item.Name
-        New-Item -ItemType Directory -Path $target -Force | Out-Null
-        $children = Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
-        foreach ($child in $children) {
-            Copy-ItemFiltered $child.FullName $target
-        }
-        return
-    }
-
-    if (Test-CredentialFileName $item.Name) {
-        Write-Warning "[prepare] CREDENTIAL RISK: skipping $($item.FullName)"
-        return
-    }
-
-    Copy-Item -LiteralPath $item.FullName -Destination $destinationDir -Force
+if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) {
+    throw "robocopy not found on PATH — required for staging."
+}
+# PS 7.3+ can promote a nonzero native exit code to a terminating error under
+# $ErrorActionPreference='Stop'. Robocopy's SUCCESS codes are nonzero, so opt out
+# for the rest of this script. (No-op on PS 5.1, where the variable is absent.)
+if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+    $PSNativeCommandUseErrorActionPreference = $false
 }
 
-# Recreate $Destination clean on each run so stale entries from a prior layout
-# never linger in the build context.
-if (Test-Path $Destination) {
-    Remove-Item $Destination -Recurse -Force
-}
-New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+$rcFlags = @('/MIR', '/MT:16', '/R:1', '/W:1', '/NFL', '/NDL', '/NP', '/NJH', '/NJS')
+$rcExcludeDirs = @('/XD') + $excludedDirectoryNames
+# .keep exists only on the dest side (seeded below). An /XF entry is also shielded
+# from /MIR's purge, so listing it keeps the placeholder stable across runs.
+$rcExcludeFiles = @('/XF', '.keep') + $credentialExcludePatterns
 
-if (Test-Path $HostOpencodeDir) {
-    $entries = Get-ChildItem -Path $HostOpencodeDir -Force -ErrorAction SilentlyContinue
-    if ($entries) {
-        Write-Host "[prepare] copying $($entries.Count) entries from $HostOpencodeDir"
-        foreach ($e in $entries) {
-            Copy-ItemFiltered $e.FullName $Destination
+# robocopy exit codes: 0 = nothing to do | 1 = copied | 2 = purged extras |
+# 3 = both | >= 8 = real failure. Everything below 8 is success.
+function Invoke-RobocopyStage([string]$src, [string]$dst, [string]$label) {
+    if (Test-Path $src) {
+        robocopy $src $dst @rcFlags @rcExcludeDirs @rcExcludeFiles | Out-Null
+        $rc = $LASTEXITCODE
+        $global:LASTEXITCODE = 0
+        if ($rc -ge 8) { throw "robocopy failed staging ${label}: exit $rc" }
+        $verdict = switch ($rc) {
+            0       { 'unchanged' }
+            1       { 'updated' }
+            2       { 'stale entries purged' }
+            3       { 'updated + purged' }
+            default { "exit $rc" }
         }
+        Write-Host "[prepare] $label -> $verdict"
     } else {
-        Write-Host "[prepare] $HostOpencodeDir is empty"
+        Write-Host "[prepare] no $label on host — staging empty dir"
     }
-} else {
-    Write-Host "[prepare] no ~/.config/opencode on host — staging empty dir"
+
+    # Stage dir must exist even when the host has none, so the Dockerfile COPY
+    # shape stays stable; the .keep placeholder stops BuildKit/Buildah seeing an
+    # empty COPY source. Written after robocopy so /MIR cannot race it.
+    New-Item -ItemType Directory -Path $dst -Force | Out-Null
+    Set-Content -Path (Join-Path $dst '.keep') -Value '' -Encoding UTF8
 }
+
+Invoke-RobocopyStage $HostOpencodeDir     $Destination       '~/.config/opencode'
+Invoke-RobocopyStage $HostAgentsSkillsDir $SkillsDestination '~/.agents/skills'
+
+$stagedRoots = @($Destination, $SkillsDestination)
 
 # Host .sh files may carry CRLF line endings (authored on Windows) — bash
 # rejects a `\r` in the shebang line outright. Normalize before baking.
+# NOTE: robocopy compares size+mtime against the HOST file, so normalized (and
+# rewritten) files re-copy on the next run and get normalized again — expected.
 $utf8NoBomLocal = New-Object System.Text.UTF8Encoding $false
-$shFiles = Get-ChildItem -Path $Destination -Recurse -Force -Filter '*.sh' -ErrorAction SilentlyContinue
-foreach ($f in $shFiles) {
-    $content = [System.IO.File]::ReadAllText($f.FullName)
-    if ($content.Contains("`r`n")) {
-        [System.IO.File]::WriteAllText($f.FullName, ($content -replace "`r`n", "`n"), $utf8NoBomLocal)
-        Write-Host "[prepare] normalized CRLF -> LF: $($f.FullName.Substring($Destination.Length))"
+foreach ($root in $stagedRoots) {
+    $shFiles = Get-ChildItem -Path $root -Recurse -Force -Filter '*.sh' -ErrorAction SilentlyContinue
+    foreach ($f in $shFiles) {
+        $content = [System.IO.File]::ReadAllText($f.FullName)
+        if ($content.Contains("`r`n")) {
+            [System.IO.File]::WriteAllText($f.FullName, ($content -replace "`r`n", "`n"), $utf8NoBomLocal)
+            Write-Host "[prepare] normalized CRLF -> LF: $($f.FullName.Substring($root.Length))"
+        }
     }
 }
 
@@ -187,23 +202,19 @@ if (Test-Path $ocJson) {
     }
 }
 
-# Credential-pattern scan over the entire staged tree.
-$leaked = Get-ChildItem -Path $Destination -Recurse -Force -ErrorAction SilentlyContinue |
-    Where-Object { -not $_.PSIsContainer } |
-    Where-Object {
-        $n = $_.Name
-        $matched = $false
-        foreach ($pat in $credentialExcludePatterns) {
-            if ($n -like $pat) { $matched = $true; break }
+# Destination-side credential sweep. /XF stops credential files being copied in,
+# but an /XF entry is equally shielded from /MIR's purge — so one staged by an
+# older revision of this script would otherwise persist indefinitely. Delete on
+# sight (also restores the per-file CREDENTIAL RISK reporting robocopy's own
+# silent exclusion doesn't provide).
+foreach ($root in $stagedRoots) {
+    Get-ChildItem -LiteralPath $root -Recurse -Force -File -ErrorAction SilentlyContinue |
+        Where-Object { Test-CredentialFileName $_.Name } |
+        ForEach-Object {
+            Write-Warning "[prepare] CREDENTIAL RISK: removing staged $($_.FullName)"
+            Remove-Item -LiteralPath $_.FullName -Force
         }
-        $matched
-    }
-if ($leaked) {
-    foreach ($f in $leaked) {
-        Write-Warning "[prepare] CREDENTIAL RISK: removing $($f.FullName) from staged context"
-        Remove-Item $f.FullName -Force
-    }
 }
 
-Write-Host "[prepare] staged at $Destination"
+Write-Host "[prepare] staged at $Destination and $SkillsDestination"
 Write-Host "[prepare] next: ./build.ps1 -Image opencode-custom:v1"

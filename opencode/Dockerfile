@@ -8,7 +8,8 @@
 #   - Node 25 (NodeSource) + pnpm (global npm install); non-root "agent" user (uid 1000)
 #     matching the claude/codex templates.
 #   - Host ~/.config/opencode (opencode.json, AGENTS.md, plugin/, skills/, ...)
-#     staged by prepare.ps1 (opencode.json MCP command arrays: Win paths → Linux).
+#     and ~/.agents/skills (cross-agent skills standard, auto-loaded) staged by
+#     prepare.ps1 (opencode.json MCP command arrays: Win paths → Linux).
 #
 # No docker/sandbox-templates:opencode base exists (unlike claude/codex), so
 # there's no sbx integration here — this is the plain-docker path, run via
@@ -24,7 +25,7 @@ USER root
 ARG NODE_MAJOR=25
 # Installed at build time (glibc opencode-linux-x64 via npm). Pinned, not
 # @latest — a shared build artifact tracks an audited version explicitly.
-ARG OPENCODE_VERSION=1.18.3
+ARG OPENCODE_VERSION=1.18.15
 # Pinned for the same reason (see 2607081900-codegraph-integration-audit.md).
 ARG CODEGRAPH_VERSION=1.3.0
 ARG AGENT_BROWSER_VERSION=0.31.1
@@ -165,6 +166,11 @@ COPY --chown=agent:agent context/.config/opencode/ /home/agent/.config/opencode/
 # agent-browser discovery stub — repo-owned (not host-synced), survives whatever
 # is in the host's ~/.config/opencode/skills. opencode global skill location.
 COPY --chown=agent:agent skills/agent-browser/ /home/agent/.config/opencode/skills/agent-browser/
+
+# Cross-agent skills standard: opencode also auto-loads
+# ~/.agents/skills/<name>/SKILL.md. Staged from host ~/.agents/skills by
+# prepare.ps1.
+COPY --chown=agent:agent context/.agents/skills/ /home/agent/.agents/skills/
 
 ENTRYPOINT ["tini", "--"]
 CMD ["opencode"]
