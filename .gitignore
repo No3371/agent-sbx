@@ -24,3 +24,5 @@ pi/*-custom
 opencode/.opencode
 omp/context
 omp/sbx-omp
+opencode/context
+pi/context
