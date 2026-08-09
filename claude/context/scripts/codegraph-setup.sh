@@ -9,7 +9,7 @@ command -v codegraph >/dev/null 2>&1 || return 0 2>/dev/null || exit 0
 # atomically (tmp + rename), but Docker cannot rename over a file mount (EBUSY).
 # Update just its MCP entry in place first; the installer then leaves that file
 # alone and still installs its settings and instructions.
-if ! node - "$HOME/.claude.json" <<'NODE'
+if ! node - "$HOME/.claude.json" <<'NODE'; then
 const fs = require('fs');
 const file = process.argv[2];
 let config = {};
@@ -39,13 +39,12 @@ try {
     fs.closeSync(fd);
 }
 NODE
-then
-    echo "CodeGraph MCP registration failed; see the error above." >&2
-    return 0 2>/dev/null || exit 0
+	echo "CodeGraph MCP registration failed; see the error above." >&2
+	return 0 2>/dev/null || exit 0
 fi
 
 codegraph install --yes --target=claude --location=global >/tmp/codegraph-install.log 2>&1
 
 if [ -d /workspace ] && [ ! -d /workspace/.codegraph ]; then
-    (cd /workspace && codegraph init) >/tmp/codegraph-init.log 2>&1
+	(cd /workspace && codegraph init) >/tmp/codegraph-init.log 2>&1
 fi

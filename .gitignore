@@ -26,3 +26,6 @@ omp/context
 omp/sbx-omp
 opencode/context
 pi/context
+pi/.pi/sessions
+pi/.pi
+.pi/sessions
