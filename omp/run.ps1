@@ -1,16 +1,7 @@
-# Mounts the current directory as the container workspace and drops into
-# `pi` interactively.
-#
-# Persists across --rm: per-project
-# session history (named volume keyed by a hash of the workspace path — pi
-# organizes sessions by working directory, and the container's cwd is always
-# /workspace, so a single shared volume would bleed session history across
-# unrelated host projects; a per-project volume avoids that), and the npm
-# cache. When the host workspace has a node_modules, it is masked with a
-# per-project named volume and Linux-native deps are reinstalled inside (host
-# node_modules left untouched). trust.json and the models-store.json cache are
-# NOT persisted — they regenerate cheaply (a fresh container just re-asks
-# project trust / re-fetches model catalogs).
+# Mount the current directory as /workspace and launch pi. Per-project session
+# volumes prevent history crossing workspace boundaries. Host node_modules is
+# masked when necessary for Linux dependencies; transient trust and model state
+# is not persisted.
 
 [CmdletBinding()]
 param(
@@ -110,12 +101,8 @@ $shaSessions = [System.Security.Cryptography.SHA256]::Create()
 $sessionHash = ([BitConverter]::ToString($shaSessions.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant()))) -replace '-','').Substring(0,12).ToLower()
 $sessionsVol = "pi-sessions-$sessionHash"
 
-# node_modules boundary: a host (Windows) node_modules bind-mounted into the
-# Linux container carries win32-native bundler binaries that crash here. Only
-# when the host actually has one do we mask it with a per-project NAMED
-# volume (empty on first run) and install Linux-native deps inside —
-# namespaced `pi-nmvol-` so it never shares the claude/opencode/cursor/codex
-# templates' volume for the same workspace (per-suite isolation).
+# If the host has Windows node_modules, mask it with a per-project named volume
+# and install Linux-native dependencies inside the container.
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
 if ($maskNodeModules) {
@@ -126,14 +113,8 @@ if ($maskNodeModules) {
     $nmInstall = "if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi; "
 }
 
-# Forward whichever provider credential env vars are set on the host. Never
-# baked into the image — only passed at `docker run` time, same principle as
-# the other suites' API-key passthrough. List taken from pi's own
-# docs/providers.md env-var table (Anthropic, OpenAI, Bedrock, Azure, Vertex,
-# Cloudflare, OpenRouter, and the rest of the built-in provider catalog), plus
-# the build-time-installed pi packages' own env vars (CURSOR_API_KEY for
-# pi-cursor-sdk; the search-provider keys for pi-web-access — see README "Pi
-# packages").
+# Forward provider and installed-package credential variables documented by pi
+# only at container run time; never bake them into the image.
 $providerEnvVars = @(
     'ANTHROPIC_API_KEY','ANT_LING_API_KEY','AZURE_OPENAI_API_KEY','AZURE_OPENAI_BASE_URL',
     'AZURE_OPENAI_RESOURCE_NAME','AZURE_OPENAI_API_VERSION','AZURE_OPENAI_DEPLOYMENT_NAME_MAP',
@@ -176,11 +157,8 @@ if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 if ($GPU) { $runArgs += @('--gpus', 'all') }
 $runArgs += $envForward
 
-# codegraph has no --target=pi (see skills/codegraph/SKILL.md) — pi has no MCP
-# client to wire a server into anyway, so there is no `codegraph install`
-# step here (unlike claude/opencode/cursor). `codegraph init` still builds the
-# local graph so the baked codegraph skill can query it via plain CLI calls.
-# `;` not `&&`: a codegraph hiccup (e.g. no network) must not block pi.
+# Codegraph has no --target=pi, so initialize its local graph on first run for
+# CLI skill queries. Use `;` so initialization failure does not block pi.
 $bootstrap = $pmSetup + $nmInstall +
              "test -d .codegraph || codegraph init; " +
              "exec /usr/local/bin/omp launch"

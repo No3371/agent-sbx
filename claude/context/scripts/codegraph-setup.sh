@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
-# codegraph-setup.sh
-#
-# Wires the codegraph MCP server into ~/.claude.json and builds the project's
-# graph on first run. Runs on every claude launch (same CLAUDE_ENV_FILE /
-# BASH_ENV hook as merge-claude-settings.sh) because run.ps1 bind-mounts the
-# host's own ~/.claude.json over the image-baked one, so any wiring done at
-# build time would be shadowed — this has to happen at runtime instead.
-#
-# `codegraph install` rewrites the same mcpServers entry every time (cheap,
-# idempotent); `codegraph init` only runs once per project, guarded by the
-# presence of .codegraph/ (auto-sync keeps it fresh after that).
+# Wire codegraph at runtime because run.ps1's ~/.claude.json mount shadows the
+# baked configuration. Installation is idempotent; graph initialization runs
+# once per project when .codegraph/ is absent.
 
 command -v codegraph >/dev/null 2>&1 || return 0 2>/dev/null || exit 0
 

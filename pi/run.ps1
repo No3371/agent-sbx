@@ -98,12 +98,8 @@ try {
 } catch { }
 if (-not $tz) { Write-Warning "[run] could not map host timezone to an IANA name; container clock defaults to UTC" }
 
-# pi's native host state all lives under ~/.pi/agent/: auth.json (provider
-# credentials — excluded from the build context by prepare.ps1, mounted here
-# instead), settings.json + models-store.json (baked by prepare.ps1 as
-# defaults, not mounted), and sessions/ (handled below). Keep auth as an
-# individual file mount — never the whole ~/.pi dir, which would shadow the
-# baked config/skills.
+# Credentials are excluded from the image and mounted as an individual auth
+# file; mounting all of ~/.pi would shadow baked configuration and skills.
 $piAgentDir = Join-Path $env:USERPROFILE '.pi\agent'
 $authFile   = Join-Path $piAgentDir 'auth.json'
 
@@ -125,21 +121,13 @@ if (-not (Test-Path $authFile)) {
 $sessionsDir = Join-Path $Workspace '.pi\sessions'
 if (-not (Test-Path $sessionsDir)) { New-Item -ItemType Directory -Force $sessionsDir | Out-Null }
 
-# Shared package-manager caches (named volumes, per-suite). NOT `pi-*`: the
-# omp suite already owns that prefix (pi-pm-cache etc.), and sharing a volume
-# across suites couples their lifecycles — `sbx-pi-` matches this suite's
-# default image name (per-suite isolation, redteam F4). The container runs as
-# root, so fresh root:root volumes need no ownership repair; only relocate
-# pnpm's store, which otherwise defaults into /workspace.
+# Use the sbx-pi namespace so package-manager caches are never shared with other
+# suites. The root runtime needs no fresh-volume ownership repair; relocate
+# pnpm's store so it does not write into /workspace.
 $pmSetup = "pnpm config set store-dir /root/.pnpm-store 2>/dev/null || true;"
 
-# node_modules boundary: a host (Windows) node_modules bind-mounted into the
-# Linux container carries win32-native binaries that crash here. Only when the
-# host actually has one do we mask it with a per-project NAMED volume (empty on
-# first run) and install Linux-native deps inside — namespaced `sbx-pi-nmvol-`
-# so it never shares another suite's volume for the same workspace (per-suite
-# isolation, redteam F4). A fresh named volume mounts root:root — same as the
-# runtime user, so no ownership repair. Absent -> plain bind-mount.
+# If the host has Windows node_modules, mask it with a per-project, suite-specific
+# named volume and install Linux-native dependencies when the volume is empty.
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
 if ($maskNodeModules) {
@@ -150,13 +138,8 @@ if ($maskNodeModules) {
     $nmInstall = "if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi;"
 }
 
-# Forward whichever provider credential env vars are set on the host — pi's
-# env-var auth path complements the mounted auth.json. Never baked into the
-# image — only passed at run time. List taken from pi's own docs/providers.md
-# env-var table (Anthropic, OpenAI, Bedrock, Azure, Vertex, Cloudflare,
-# OpenRouter, and the rest of the built-in provider catalog), plus pi-package
-# env vars (CURSOR_API_KEY for pi-cursor-sdk; the search-provider keys for
-# pi-web-access) so they work if those packages are staged in ~/.pi.
+# Forward provider and staged-package credential variables documented by Pi
+# only at container run time; never bake them into the image.
 $providerEnvVars = @(
     'ANTHROPIC_API_KEY','ANT_LING_API_KEY','AZURE_OPENAI_API_KEY','AZURE_OPENAI_BASE_URL',
     'AZURE_OPENAI_RESOURCE_NAME','AZURE_OPENAI_API_VERSION','AZURE_OPENAI_DEPLOYMENT_NAME_MAP',
@@ -199,13 +182,9 @@ if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 if ($GPU) { $runArgs += @('--gpus', 'all') }
 $runArgs += $envForward
 
-# codegraph's MCP wiring happens at image build (a `codegraph serve --mcp`
-# entry in ~/.pi/agent/mcp.json, served to pi via pi-mcp-adapter — there is
-# no `codegraph install --target=pi`), so no install step here. `codegraph
-# init` still builds the /workspace graph on first run (guarded by .codegraph/
-# so it doesn't re-index every launch — auto-sync keeps it fresh after that);
-# the MCP server needs that initialized index to answer.
-# `;` not `&&`: a codegraph hiccup (e.g. no network) must not block pi.
+# Codegraph MCP wiring is baked into the image, but its index is initialized on
+# first run and required by the server. Use `;` so initialization failure does
+# not block Pi.
 $bootstrap = "$pmSetup $nmInstall " +
              "test -d .codegraph || codegraph init; " +
              "exec pi"

@@ -98,12 +98,8 @@ RUN git config --system core.autocrlf input \
  && git config --system user.name 'agent' \
  && git config --system user.email 'agent@sandbox.local'
 
-# rm-guard: shadow the real coreutils `rm` in place with an in-repo wrapper
-# (rm-guard/rm-guard.sh) that refuses to remove /workspace/.git (or anything
-# inside/above it) and passes every other invocation straight through
-# unchanged. Not a `~/.bashrc` alias — bash doesn't expand aliases in the
-# non-interactive shells the agent's shell tool actually uses, so an alias
-# would silently never fire for the one case this exists to cover.
+# rm-guard protects /workspace/.git and related paths by replacing `rm`;
+# non-interactive agent shells do not expand aliases.
 COPY rm-guard/rm-guard.sh /usr/local/libexec/rm-guard.sh
 RUN set -eux; \
     chmod 0755 /usr/local/libexec/rm-guard.sh; \
@@ -133,11 +129,8 @@ RUN set -eux; \
     cd /root/.omp/plugins; \
     omp plugin install $(jq -r '.dependencies | to_entries[] | "\(.key)@\(.value)"' package.json)
 
-# Discovery stubs for the CLIs baked above — repo-owned (not host-synced), so
-# they survive whatever is in the host's ~/.omp/agent/skills. Agent Skills
-# standard location; everything under skills/ ships, so a new stub needs no
-# Dockerfile change. codegraph is wired as a plain CLI + skill rather than over
-# MCP because `codegraph install` has no omp target. See skills/*/SKILL.md.
+# Repo-owned discovery skills survive host-synced OMP state. Codegraph is
+# exposed as a CLI skill because its installer has no OMP target.
 COPY skills/ /root/.omp/agent/skills/
 
 CMD ["launch"]

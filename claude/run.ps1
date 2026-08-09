@@ -1,77 +1,21 @@
-# Run the baked cc-custom image without sbx.
+# Run the baked cc-custom image with the current directory as /workspace.
+# Run `/login` on the host first. Individual OAuth files are mounted instead of
+# ~/.claude, which would shadow baked skills, agents, and settings.
 #
-# Mounts the current directory as the container workspace and drops into
-# `claude` interactively. Reuses host OAuth by bind-mounting individual host
-# files (NOT the whole ~/.claude dir, which would shadow the image's baked
-# skills/agents/settings).
+# The host ~/.claude.json is never mounted writable: Claude Code rewrites that
+# registry wholesale, so concurrent host and container writers can lose state.
+# A disposable per-run copy contains only the identity and MCP fields needed by
+# the container. Credentials are mounted read-write so long sessions can refresh.
+# Refresh tokens are single-use, so concurrent host and container refreshes can
+# race; avoid leaving both running across a token expiry.
 #
-# Run `/login` on the host first. The container mounts the host credentials so
-# Claude Code keeps using the same subscription-backed OAuth account.
+# Project-local .claude/projects stores conversation history across --rm runs.
+# Both OAuth files and history may contain secrets; never commit or share them.
 #
-# HOST STATE ISOLATION: ~/.claude.json is NOT mounted. It is Claude Code's
-# global registry — trusted-repo list (projects[<path>].hasTrustDialogAccepted),
-# onboarding flags, model caches — and Claude Code rewrites the whole file from
-# an in-memory snapshot taken at startup. Mounting the host file made every
-# container a second writer racing the host app: whichever instance flushed last
-# overwrote the other's state wholesale, silently wiping trusted repos (observed:
-# a 17h container dropped the host config 39,902 -> 1,074 bytes with `projects`
-# emptied). Instead a throwaway per-run COPY is seeded with just the fields the
-# container needs (OAuth identity + MCP servers), mounted, and deleted on exit.
-# The container can write it freely; the host file is never opened for write.
-#
-# .credentials.json IS mounted read-write, deliberately, and unlike .claude.json
-# above. The sandbox is the primary place agents run here — not the host app —
-# so it is the instance that has to be able to refresh in place. Under the
-# previous `:ro` mount every container was capped at whatever life remained on
-# the access token it started with, which a long session outlives.
-#
-# Accepted race: refresh tokens are single-use, and each instance decides to
-# refresh from an in-memory snapshot taken at ITS OWN startup — nothing re-reads
-# the file, so a fresher expiresAt on disk does not suppress a peer's refresh.
-# Two instances both live across an expiry will both try to redeem the same
-# token; the first wins, the second is left holding a burned one and must
-# /login. A host started AFTER a container refresh is fine — it loads the
-# rotated token from disk. So the exposure is narrow but real: host and
-# container running concurrently across an expiry boundary. The trade accepted
-# here — the inverse of the .claude.json one — is that the host may be the
-# loser. Don't leave host Claude Code logged in beside a long container session.
-#
-# Conversation history (session transcripts + auto memory) is stored in
-# ~/.claude/projects/<encoded-cwd>/ — NOT in .claude.json — so with --rm it
-# was lost every run. Since the workspace is always mounted at the fixed path
-# /workspace, the encoded dir name is always `-workspace`, so a project-local
-# folder is bind-mounted onto it: history now lives in and travels with the
-# project instead of the host's global ~/.claude.
-#
-# SECURITY: ~/.claude.json and ~/.claude/.credentials.json carry live OAuth /
-# session tokens. Treat them like SSH keys — never commit, never share them
-# (any process/container reading %USERPROFILE% can read the plaintext token).
-# The project's .claude/projects/ history folder can contain sensitive
-# conversation content too; it's covered by this repo's top-level .gitignore
-# (`.claude`), but check your own project's .gitignore if reusing this launcher
-# elsewhere.
-#
-# Runs claude with --permission-mode auto by default (Claude Code's built-in
-# auto mode, v2.1.83+): reads and working-directory file edits auto-approve
-# with no prompt, while Bash/shell and network calls still route through
-# Claude Code's classifier, which auto-runs what it judges safe and escalates
-# what it doesn't — normal Bash review, just without a human in the loop for
-# routine stuff. Requires the account/model to support auto mode
-# (Team/Enterprise needs an Owner to enable it first) — see prepare.ps1's
-# permissions.ask stripping, which auto mode needs to actually take effect
-# for Edit/Write/NotebookEdit.
-#
-# Also passes --allow-dangerously-skip-permissions, which does NOT start the
-# session in bypass — it just adds bypassPermissions to the Shift+Tab mode
-# cycle (after plan, before auto) so it's reachable mid-session without a
-# restart. --dangerously-skip-permissions (bare) would instead *start* the
-# session already in bypass; auto mode's classifier treats launching that
-# combination as a blockable action, so auto + allow (not auto + bare-skip)
-# is the supported way to get both modes in one session.
-#
-# Pass -DangerouslySkipPermissions to start directly in bypass instead (skips
-# auto mode/the classifier from the first prompt) — the container is still
-# the blast-radius boundary, so this is for when you want that boundary alone.
+# Auto mode approves reads and workspace edits while classifying shell and
+# network calls. --allow-dangerously-skip-permissions only makes bypass mode
+# selectable; -DangerouslySkipPermissions starts in bypass immediately, relying
+# on the container as the blast-radius boundary.
 
 [CmdletBinding()]
 param(
@@ -240,15 +184,9 @@ if (-not (Test-Path $historyDir)) { New-Item -ItemType Directory -Force $history
 # Runs every launch, node_modules mask or not.
 $pmSetup = "sudo chown agent:agent /home/agent/.pnpm-store 2>/dev/null; pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
 
-# node_modules boundary: a host (Windows) node_modules bind-mounted into the
-# Linux container carries win32-native bundler binaries (rollup/esbuild/
-# rolldown) that crash here. Only when the host actually has a node_modules do
-# we mask it with a per-project NAMED volume (empty on first run) and install
-# Linux-native deps from empty inside the container — mirroring the plugin
-# reinstall precedent in this Dockerfile. A fresh named volume mounts root:root
-# while we run as agent, so chown it unconditionally (every run, in case the
-# volume was recreated) before the empty-check. Absent -> plain bind-mount, and
-# only the pm-cache volumes above change vs. pre-pivot behavior.
+# If the host has Windows node_modules, mask it with a per-project named volume
+# because native binaries cannot run in Linux. Chown a fresh volume, then install
+# Linux dependencies only when it is empty; otherwise leave the bind mount alone.
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
 if ($maskNodeModules) {

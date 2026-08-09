@@ -1,23 +1,10 @@
 #!/usr/bin/env bash
-# rm-guard: shadows the real coreutils `rm`. Any operand that resolves to a
-# protected path, or to a path inside/above one, is refused; everything else
-# is passed straight through to the real binary unchanged.
+# Refuse deletions at, inside, or above configured protected paths; pass other
+# invocations to the real `rm`. Paths default to /workspace/.git and can be
+# overridden with the colon-separated RM_GUARD_PROTECTED_PATHS variable.
 #
-# Protected paths default to /workspace/.git (this repo's sandbox suites all
-# mount the project at /workspace) and can be overridden with a
-# colon-separated RM_GUARD_PROTECTED_PATHS env var.
-#
-# Installed by shadowing the real `rm` in place (Dockerfile RUN step), not via
-# a `~/.bashrc` alias — bash does not expand aliases in the non-interactive
-# shells a coding agent's shell tool actually uses, so an alias would silently
-# never fire for the one case this exists to cover.
-#
-# This is a guard against accidental deletion, not a security boundary: an
-# agent can still bypass it deliberately (calling $REAL_RM directly, `find
-# -delete`, a language runtime's own filesystem API, etc.). Its one piece of
-# tamper-resistance — the agent can't just `ln -sf` rm back to $REAL_RM and
-# undo this — relies on /usr/bin being root-owned and the agent user being
-# non-root; it stops holding if a suite ever runs the agent as root.
+# This prevents accidental deletion, not deliberate bypass, and is not a
+# security boundary.
 set -euo pipefail
 
 REAL_RM="/usr/bin/rm.real"

@@ -1,23 +1,7 @@
-# Stages host ~/.claude payload into ./context/.claude for the podman build.
-# Maps: settings.json (rewritten + filtered), skills, agents, tools, commands,
-#       hooks, plugins.
-# Excludes: .credentials.json, .claude.json, sessions, history, projects,
-#           cache, statsig, telemetry — sbx manages those.
-#
-# Settings filtering rules (applied before writing to context):
-#   - Keeps: enabledPlugins (plugins/ is now baked into image)
-#   - Strips: skipAutoPermissionPrompt (permission posture is a template-author
-#             decision, not silently inherited from host)
-#   - statusLine: command rewritten — git-bash node path → bare `node`,
-#             cygpath -w wrappers dropped. Kept as-is otherwise.
-#   - Hooks: each hook command is path-rewritten (Win → Linux), then the hook
-#             entry is dropped if its command references a path that does NOT
-#             exist in the staged image FS layout.
-#   - mcpServers: commands path-rewritten (Win npx-cache → bare name); entries
-#             with no Linux mapping are dropped with a warning.
-#   - project .mcp.json: merged from repo root (one level up from this script),
-#             command paths rewritten — covers project-level MCP installs like
-#             context-mode. Project entries win over global on name collision.
+# Stage host ~/.claude configuration and extensions into ./context/.claude.
+# Credentials, sessions, history, projects, caches, and telemetry stay on the
+# host. Rewrites Windows paths in settings, hooks, plugins, and MCP commands;
+# project MCP entries are merged with project values taking precedence.
 
 [CmdletBinding()]
 param(
@@ -48,19 +32,8 @@ function Test-CredentialFileName([string]$name) {
     return $false
 }
 
-# Staging is INCREMENTAL. This used to delete each stage dir and re-copy the host
-# tree file-by-file via Copy-Item — ~2350 files / 32MB for a typical ~/.claude,
-# and PowerShell's per-cmdlet overhead dominates when the files are this small.
-# robocopy compares size + write time per file in native code and transfers only
-# what differs, so an unchanged host tree costs a stat sweep instead of a full
-# re-copy (measured 21.1s -> 0.6s here; the gap is wider on a cold file cache or
-# with on-access AV inspecting 32MB of fresh writes).
-#
-# /MIR also purges dest entries whose source is gone — the property the old
-# delete-then-copy shape bought, kept without paying the deletion.
-#
-# robocopy exit codes: 0 = nothing to do | 1 = copied | 2 = purged extras |
-# 3 = both | >= 8 = real failure. Everything below 8 is success.
+# robocopy /MIR stages incrementally and purges destination entries removed from
+# the source. Exit codes below 8 are success; 8 and above are failures.
 if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) {
     throw "robocopy not found on PATH — required for staging."
 }
@@ -135,10 +108,7 @@ foreach ($f in $shFiles) {
     }
 }
 
-# --- plugins/*.json: rewrite Win install paths so claude-code resolves plugins in sandbox ---
-# Claude Code persists absolute host paths in installed_plugins.json (installPath)
-# and known_marketplaces.json (installLocation). Without rewriting, the sandbox
-# sees `C:\Users\...` and fails to locate any plugin asset (MCPs included).
+# Rewrite persisted Windows plugin paths, which are unusable in the sandbox.
 function Convert-WinPathToLinux([string]$p) {
     if ([string]::IsNullOrEmpty($p)) { return $p }
     $p = $p -replace '(?i)^C:\\Users\\[^\\]+\\\.claude', '/home/agent/.claude'
@@ -155,14 +125,8 @@ function Write-JsonNoBom([string]$path, $obj) {
     [System.IO.File]::WriteAllText($path, $json, $Utf8NoBom)
 }
 
-# --- Build-time install pilot (see 2607100235-context-mode-build-time-install-pilot-plan.md) ---
-# Marketplaces listed here are NOT vendored from the host. The Dockerfile installs
-# their plugins fresh via `claude plugin install`, so paths/caches/hook commands are
-# whatever Claude Code writes on Linux — nothing to rewrite. Strip their payload dirs
-# and registry entries so the image has no host-baked state for them and the in-container
-# install writes its own. Extend this list (not fork the logic) for Option A cutover.
-# NOTE: defined here (not near $pluginCachesToDrop) because the installed_plugins.json
-# filter below references it — PowerShell needs it in scope before first use.
+# Remove host payloads and registry entries for marketplaces installed fresh in
+# the image so their paths, caches, and hooks are generated for Linux.
 $buildTimeInstallMarketplaces = @('context-mode')
 
 $installedPluginsPath = Join-Path $Destination 'plugins/installed_plugins.json'
@@ -256,18 +220,9 @@ if ($settings.PSObject.Properties['skipAutoPermissionPrompt']) {
     Write-Host "[prepare] settings: stripped skipAutoPermissionPrompt (not inheriting host auto-approve)"
 }
 
-# Sandbox-only permission posture: run.ps1 launches with `--permission-mode
-# auto` (Claude Code's built-in auto mode, v2.1.83+). In that mode, reads and
-# working-directory file edits (Edit/Write/NotebookEdit) skip Claude Code's
-# classifier and auto-approve with no prompt and no extra classifier call;
-# Bash/shell and network calls still route through the classifier, which
-# auto-runs what it judges safe and escalates/blocks what it doesn't — same
-# as normal, just without a blanket allow. An explicit `ask` rule still
-# forces a prompt in every mode including auto, so any Edit/Write/
-# NotebookEdit ask rule inherited from host settings.json would silently
-# defeat that — strip it. This is injected here rather than in host
-# settings.json so it applies only to the built image, not the host's own
-# Claude Code session.
+# In sandbox auto mode, workspace edits auto-approve while shell and network
+# calls remain classified. Remove inherited Edit/Write/NotebookEdit `ask` rules
+# that would override auto mode; this changes only the image configuration.
 if (-not $settings.PSObject.Properties['permissions']) {
     $settings | Add-Member -NotePropertyName permissions -NotePropertyValue ([pscustomobject]@{})
 }
@@ -288,14 +243,8 @@ if ($settings.autoMode.PSObject.Properties['classifyAllShell']) {
 }
 Write-Host "[prepare] settings: injected sandbox permission posture (auto mode via run.ps1 --permission-mode auto; Edit/Write/NotebookEdit ask stripped; classifyAllShell on)"
 
-# Pre-approve tools that are baked into the image, installed deliberately, and
-# have no path to the network or to files outside the workspace on their own.
-# A `permissions.allow` match resolves before the classifier runs (same as a
-# narrow `Bash(npm test)` allow rule per auto-mode-config docs), so these skip
-# the classifier round-trip entirely instead of just skipping a forced prompt.
-# Deliberately excludes anything that reaches out: ctx_fetch_and_index (fetches
-# URLs) is left off the ctx_ list so out-of-sandbox network calls still hit the
-# classifier, per this image's permission posture.
+# Pre-approve deliberately installed tools limited to local or workspace access.
+# Network-capable tools remain excluded so out-of-sandbox requests are classified.
 $autoApproveTools = @(
     'Agent', 'ToolSearch', 'Grep', 'Explore', 'AskUserQuestion'
     'mcp__codegraph__*',
@@ -414,8 +363,6 @@ function Test-HookCommandAllowed([string]$cmd) {
     }
     foreach ($prefix in $allowedPathPrefixes) {
         if ($cmd -like "*$prefix*") {
-            # Extra check for plugins/ prefix: verify the referenced file actually
-            # exists in the staged plugins directory (not just the prefix match).
             if ($prefix -eq '/home/agent/.claude/plugins/') {
                 # Extract the path segment after the prefix
                 if ($cmd -match '/home/agent/\.claude/plugins/([^"'' ]+)') {
@@ -493,13 +440,7 @@ if ($settings.PSObject.Properties['hooks']) {
     $settings.hooks = $filteredHooks
 }
 
-# --- plugin-bundled hooks.json: rewrite host paths baked in by plugin self-heal ---
-# Plugins declare their own hooks in <plugin>/hooks/hooks.json (not settings.json).
-# Some plugins (e.g. context-mode) self-normalize ${CLAUDE_PLUGIN_ROOT} placeholders
-# to absolute host paths on first run — on this host that means Windows paths
-# (C:/Program Files/nodejs/node.exe, C:/Users/BA/.claude/...) baked straight into
-# the cached plugin copy. Copy-ItemFiltered stages that file verbatim, so without
-# this pass those absolute Windows paths would ship inside the Linux image.
+# Rewrite unusable Windows absolute paths embedded in staged plugin hooks.
 function Rewrite-CommandsInObject($obj) {
     $changed = $false
     if ($obj -is [System.Array]) {

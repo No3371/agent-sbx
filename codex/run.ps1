@@ -1,13 +1,6 @@
-# Run the baked codex-custom image without sbx.
-#
-# Mounts the current directory as the container workspace and drops into
-# `codex` interactively. No host auth.json bind-mount: a partially-written
-# auth.json (e.g. a `{}` placeholder, or a file whose device-auth tokens
-# lack a ChatGPT plan type) makes `codex login status` report success while
-# the TUI's `account/read` bootstrap still hard-errors ("plan type is
-# required for chatgpt authentication"). Since device-auth login is required
-# either way, just do it fresh each run inside the ephemeral container. See
-# .projex eval 2607060232.
+# Run the baked codex-custom image with the current directory as /workspace.
+# Do not mount host auth.json: incomplete device-auth state can pass login status
+# but fail TUI startup, so authenticate inside each ephemeral container.
 
 [CmdletBinding()]
 param(
@@ -97,16 +90,10 @@ try {
 } catch { }
 if (-not $tz) { Write-Warning "[run] could not map host timezone to an IANA name; container clock defaults to UTC" }
 
-# node_modules boundary: a host (Windows) node_modules bind-mounted into the
-# Linux container carries win32-native bundler binaries (rollup/esbuild/
-# rolldown) that crash here. Only when the host actually has a node_modules do
-# we mask it with a per-project NAMED volume (empty on first run) and install
-# Linux-native deps from empty inside the container — mirroring the plugin
-# reinstall precedent in this Dockerfile. A fresh named volume mounts root:root
-# while we run as agent, so chown it unconditionally (every run, in case the
-# volume was recreated) before the empty-check. Absent -> plain bind-mount,
-# unchanged. pnpm not baked here -> pnpm projects belong in the claude image
-# (the pnpm branch errors visibly; documented caveat).
+# If the host has Windows node_modules, mask it with a per-project named volume
+# because native binaries cannot run in Linux. Chown a fresh volume and install
+# Linux dependencies when empty. pnpm is not baked into this image, so its
+# projects fail with an explicit error.
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
 if ($maskNodeModules) {

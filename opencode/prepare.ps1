@@ -1,26 +1,7 @@
-# Stages host opencode payload into the build context:
-#   ~/.config/opencode -> ./context/.config/opencode (opencode.json, AGENTS.md,
-#                         plugin/, skills/, vendored repos, ...)
-#   ~/.agents/skills   -> ./context/.agents/skills   (cross-agent skills standard;
-#                         opencode auto-loads ~/.agents/skills/<name>/SKILL.md)
-#
-# Staging is INCREMENTAL via robocopy /MIR (same system as claude/codex
-# prepare.ps1): robocopy compares size + write time per file in native code and
-# transfers only what differs, so an unchanged host tree costs a stat sweep
-# instead of a full re-copy. /MIR also purges dest entries whose source is gone.
-# Exclusions (reused from the claude/codex prepare.ps1 convention):
-#   - .git/ and .github/ dirs anywhere in the tree (never belongs in a baked image)
-#   - node_modules/ dirs anywhere in the tree (host-built, breaks native addons
-#     in a Linux container; see README "What prepare.ps1 excludes")
-#   - filenames matching known credential patterns (defense in depth)
-#
-# opencode manages its own OAuth/provider credentials elsewhere
-# (~/.local/share/opencode/auth.json), which is bind-mounted at runtime by
-# run.ps1 — nothing under ~/.config/opencode is expected to hold secrets, but
-# the scan runs anyway since it's cheap.
-#
-# After staging, opencode.json gets its local MCP `command` arrays rewritten
-# (Win paths -> Linux) — see the section comment below.
+# Stage ~/.config/opencode and ~/.agents/skills into their build-context roots
+# with robocopy /MIR. Exclude repository metadata, host node_modules, and known
+# credential filenames. OpenCode credentials live in the runtime-mounted
+# auth.json; staged MCP command arrays are rewritten from Windows to Linux.
 
 [CmdletBinding()]
 param(
@@ -110,22 +91,13 @@ foreach ($root in $stagedRoots) {
     }
 }
 
-# --- opencode.json: rewrite Win paths in local MCP server command arrays ---
-# opencode.json's only host-path-bearing, config-embedded surface is local MCP
-# `command` arrays (["npx","-y","pkg"] / ["node","C:\\...\\index.js"]). Unlike
-# claude's settings.json there are no hooks/statusLine/skipAutoPermissionPrompt
-# to port. Rewrite EVERY element (a Win path can live in an arg, not just [0] —
-# redteam F2), force-array-cast for PS 5.1's single-element-array collapse
-# (F3), drop the server if any element is still a Windows drive path after
-# rewrite. `permission` (a documented opencode key controlling auto-approval)
-# is NOT stripped here — the plan scoped permission-posture out — but its
-# presence is surfaced before build/export (F1, minimal touch).
+# Rewrite every local MCP command element because paths may appear in arguments,
+# and drop servers with unresolved Windows drive paths. Force array conversion
+# to prevent PowerShell 5.1 from collapsing single-element command arrays.
 function Convert-OpencodeWinPath([string]$p) {
     if ([string]::IsNullOrEmpty($p)) { return $p }
     # host opencode config dir → container path
     $p = $p -replace '(?i)^([A-Za-z]):[\\/]Users[\\/][^\\/]+[\\/]\.config[\\/]opencode', '/home/agent/.config/opencode'
-    # normalize backslashes only for things that look like Windows paths (leave
-    # bare tool names / flags untouched)
     if ($p -match '^[A-Za-z]:[\\/]' -or $p -match '\\') { $p = $p -replace '\\', '/' }
     return $p
 }

@@ -1,22 +1,7 @@
-# Custom OpenCode sandbox template
-#   - Base: debian:bookworm-slim (glibc) — replaces ghcr.io/anomalyco/opencode
-#     (third-party, Alpine/musl, binary-only, floating :latest). glibc lets
-#     agent-browser / playwright / codegraph use their standard prebuilt
-#     (glibc) binaries — none of the prior port's musl workarounds are needed.
-#   - opencode installed at BUILD TIME via npm (opencode-ai), pinned — no more
-#     dependency on a third-party pre-baked image.
-#   - Node 25 (NodeSource) + pnpm (global npm install); non-root "agent" user (uid 1000)
-#     matching the claude/codex templates.
-#   - Host ~/.config/opencode (opencode.json, AGENTS.md, plugin/, skills/, ...)
-#     and ~/.agents/skills (cross-agent skills standard, auto-loaded) staged by
-#     prepare.ps1 (opencode.json MCP command arrays: Win paths → Linux).
-#
-# No docker/sandbox-templates:opencode base exists (unlike claude/codex), so
-# there's no sbx integration here — this is the plain-docker path, run via
-# run.ps1. Host auth (~/.local/share/opencode/auth.json) is bind-mounted at
-# runtime by run.ps1; nothing credential-related is baked into the image.
-#
-# Build context expects ./context/.config/opencode populated by prepare.ps1.
+# OpenCode sandbox built on Debian/glibc with pinned npm tooling. prepare.ps1
+# stages OpenCode and cross-agent configuration into the build context and
+# rewrites Windows MCP paths. run.ps1 bind-mounts host authentication at run
+# time; credentials are never baked into the image.
 
 FROM debian:bookworm-slim
 
@@ -34,13 +19,8 @@ ARG GO_VERSION=1.26.3
 ARG INSTALL_GO=1
 ARG INSTALL_PYTHON=1
 
-# Baseline coding-agent tools + Node 25 via NodeSource (mirrors codex/). Install
-# opencode + agent tooling in the same layer. On glibc every one of these is a
-# stock npm install — no musl symlink/env workaround (contrast the Alpine base).
-# pnpm comes from npm directly (not corepack): Node 25 dropped bundled corepack,
-# and these sandboxes don't pin package-manager versions per project via the
-# package.json "packageManager" field, so corepack's shim indirection buys us
-# nothing over a plain global pnpm.
+# Install Node 25 through NodeSource and stock npm packages on glibc. Install
+# pnpm directly because Node 25 no longer bundles corepack.
 RUN set -eux; \
     for flag in "$INSTALL_GO" "$INSTALL_PYTHON"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
     apt-get update; \
@@ -74,30 +54,18 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash agent \
  && mkdir -p /home/agent/.local/share/opencode /home/agent/.local/state/opencode \
  && chown -R agent:agent /home/agent
 
-# agent-browser install: Chrome for Testing + Linux system libs (--with-deps,
-# needs root/apt). Layer 1 purged /var/lib/apt/lists/*, and bookworm-slim ships
-# NONE of Chromium's runtime libs — so refresh apt lists here before --with-deps.
-# agent-browser runs first and its self-apt-update behavior is undocumented, so
-# don't rely on it (playwright's installer self-runs apt-get update; this one may
-# not). HOME override lands Chrome in the agent's home so it isn't re-downloaded
-# after USER agent. (glibc → the standard flow works; the Alpine base had to skip
-# this and point at system Chromium instead.)
+# Refresh apt metadata for Chrome's system dependencies, then install Chrome
+# into the agent's home and restore agent ownership.
 RUN apt-get update \
  && HOME=/home/agent agent-browser install --with-deps \
  && chown -R agent:agent /home/agent/.agent-browser
 
-# Playwright's own Chromium + Linux system libs, baked at build time so a
-# project's first `playwright install` isn't cold. `playwright install` runs as
-# root with HOME=/home/agent, so it creates /home/agent/.cache owned by
-# root:root — chown the whole .cache (parent + ms-playwright) back to agent, or
-# opencode (Bun) can't mkdir ~/.cache/opencode on first run as the agent user
-# (bare `docker run`; run.ps1's $pmSetup also chowns .cache, but the image must
-# stand on its own).
+# Playwright runs as root and creates an agent-home cache; restore ownership so
+# OpenCode can create its own cache as the agent user.
 RUN HOME=/home/agent playwright install --with-deps chromium \
  && chown -R agent:agent /home/agent/.cache
 
-# Optional Go (official tarball, pinned — apt's golang lags upstream; mirrors
-# claude/). Installs to /usr/local/go, symlinks onto PATH.
+# Optional pinned Go from the official tarball because apt lags upstream.
 RUN set -eux; \
     if [ "$INSTALL_GO" = "1" ]; then \
         arch="$(dpkg --print-architecture)"; \
@@ -133,12 +101,8 @@ RUN git config --system --add safe.directory '*' \
  && git config --system user.name 'agent' \
  && git config --system user.email 'agent@sandbox.local'
 
-# rm-guard: shadow the real coreutils `rm` in place with an in-repo wrapper
-# (rm-guard/rm-guard.sh) that refuses to remove /workspace/.git (or anything
-# inside/above it) and passes every other invocation straight through
-# unchanged. Not a `~/.bashrc` alias — bash doesn't expand aliases in the
-# non-interactive shells the agent's shell tool actually uses, so an alias
-# would silently never fire for the one case this exists to cover.
+# rm-guard protects /workspace/.git and related paths by replacing `rm`;
+# non-interactive agent shells do not expand aliases.
 COPY rm-guard/rm-guard.sh /usr/local/libexec/rm-guard.sh
 RUN set -eux; \
     chmod 0755 /usr/local/libexec/rm-guard.sh; \

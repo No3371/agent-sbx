@@ -1,8 +1,3 @@
-# Self-built Codex CLI image
-#   - Starts from official Node 25 bookworm-slim
-#   - Installs latest @openai/codex from npm
-#   - Recreates only the agent user/env pieces needed by run.ps1
-#   - run.ps1 performs device auth at startup; no credentials are baked or mounted
 
 FROM node:25-bookworm-slim
 
@@ -12,16 +7,14 @@ ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
     PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH \
     BASH_ENV=/etc/sandbox-persistent.sh
 
-# Pinned, not @latest — a shared build artifact should track an audited
-# version explicitly (see .projex/2607081900-codegraph-integration-audit.md).
+# Pin the audited version for reproducible shared builds.
 ARG CODEGRAPH_VERSION=1.3.0
 # Pinned alongside CodeGraph so browser automation is reproducible.
 ARG AGENT_BROWSER_VERSION=0.31.1
 # Playwright: browser test automation library, baked with Chromium for offline use.
 ARG PLAYWRIGHT_VERSION=1.61.1
 
-# Core tools plus native build tooling for plugin deps. Deliberately omits
-# heavyweight extras like Docker CLI, Java, man-db, Ubuntu dev bundles, and clipboard bridge.
+# Core tools plus native build tooling required by plugin dependencies.
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -82,12 +75,8 @@ RUN git config --system --add safe.directory '*' \
  && git config --system user.name 'agent' \
  && git config --system user.email 'agent@sandbox.local'
 
-# rm-guard: shadow the real coreutils `rm` in place with an in-repo wrapper
-# (rm-guard/rm-guard.sh) that refuses to remove /workspace/.git (or anything
-# inside/above it) and passes every other invocation straight through
-# unchanged. Not a `~/.bashrc` alias — bash doesn't expand aliases in the
-# non-interactive shells the agent's shell tool actually uses, so an alias
-# would silently never fire for the one case this exists to cover.
+# rm-guard protects /workspace/.git and related paths by replacing `rm`;
+# non-interactive agent shells do not expand aliases.
 COPY rm-guard/rm-guard.sh /usr/local/libexec/rm-guard.sh
 RUN set -eux; \
     chmod 0755 /usr/local/libexec/rm-guard.sh; \

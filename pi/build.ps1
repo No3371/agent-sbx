@@ -1,4 +1,4 @@
-# Build the custom OpenCode sandbox template with podman.
+# Build the custom Pi sandbox template with the selected container engine.
 #
 # Output modes (pick one):
 #   default          — image stays in the selected engine's local store only

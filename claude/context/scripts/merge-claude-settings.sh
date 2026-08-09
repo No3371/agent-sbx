@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# merge-claude-settings.sh
-# Merges /home/agent/.claude-bake/settings.local.json on top of the
-# sbx-managed ~/.claude/settings.json.
-#
-# Idempotent: skips if `extraKnownMarketplaces` key is already present in
-# the target (probe from Dockerfile comment). Sourced via BASH_ENV /
-# CLAUDE_ENV_FILE hook in /etc/sandbox-persistent.sh.
-#
-# Requires: jq (present in base image)
+# Merge baked settings over sbx-managed ~/.claude/settings.json. The
+# BASH_ENV/CLAUDE_ENV_FILE hook sources this script; it uses jq and skips the
+# merge when `extraKnownMarketplaces` is already present.
 
 BAKE_SETTINGS="/home/agent/.claude-bake/settings.local.json"
 TARGET_SETTINGS="/home/agent/.claude/settings.json"

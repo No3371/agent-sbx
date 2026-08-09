@@ -95,16 +95,8 @@ RUN set -eux; \
         ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt; \
     fi
 
-# pnpm + codegraph (semantic code-intelligence MCP server for agents; see
-# .projex/2607081900-codegraph-integration-audit.md). Pinned, not @latest — a
-# shared build artifact should track an audited version explicitly.
-# agent-browser: browser automation CLI (github.com/vercel-labs/agent-browser),
-# pinned for the same reason as codegraph.
-# playwright: browser test automation library, baked so JS/TS/Node projects
-# don't hit a cold `playwright install` mid-task. Pinned for the same reason.
-#
-# Claude Code is deliberately NOT installed here — see the trailing
-# CLAUDE_CODE_CACHEBUST layer below.
+# Bake pnpm plus pinned codegraph, agent-browser, and Playwright tooling for
+# reproducible, offline use. Claude Code remains separate because it is unpinned.
 ARG CODEGRAPH_VERSION=1.3.0
 ARG AGENT_BROWSER_VERSION=0.31.1
 ARG PLAYWRIGHT_VERSION=1.61.1
@@ -125,18 +117,12 @@ RUN set -eux; \
 RUN HOME=/home/agent agent-browser install --with-deps \
  && chown -R agent:agent /home/agent/.agent-browser
 
-# Playwright's own Chromium build + Linux system libs (--with-deps, needs
-# root/apt). HOME override lands it in the agent's cache instead of /root,
-# avoiding a second download after USER agent below.
+# Install Chromium and its system libraries into the agent-owned cache.
 RUN HOME=/home/agent playwright install --with-deps chromium \
  && chown -R agent:agent /home/agent/.cache/ms-playwright
 
-# rm-guard: shadow the real coreutils `rm` in place with an in-repo wrapper
-# (rm-guard/rm-guard.sh) that refuses to remove /workspace/.git (or anything
-# inside/above it) and passes every other invocation straight through
-# unchanged. Not a `~/.bashrc` alias — bash doesn't expand aliases in the
-# non-interactive shells the agent's Bash tool actually uses, so an alias
-# would silently never fire for the one case this exists to cover.
+# rm-guard protects /workspace/.git and related paths by replacing `rm`;
+# non-interactive agent shells do not expand aliases.
 COPY rm-guard/rm-guard.sh /usr/local/libexec/rm-guard.sh
 RUN set -eux; \
     chmod 0755 /usr/local/libexec/rm-guard.sh; \
@@ -156,17 +142,9 @@ RUN set -eux; \
     [ ! -e /tmp/rm-guard-selftest ] || { echo "ERROR: rm-guard blocked an unprotected delete"; exit 1; }; \
     /usr/bin/rm.real -rf /workspace
 
-# Claude Code: intentionally unpinned — it ships too often for an audited pin to
-# stay useful. Unpinned alone is NOT enough: a RUN step's cache key is the parent
-# step's key plus the substituted command text, so `npm install -g` with no
-# version resolves "latest" exactly once and then hits cache forever. Passing a
-# changing CLAUDE_CODE_CACHEBUST (build.ps1 does this by default) is what forces
-# a re-resolve. It is referenced inside the command, not merely declared, so the
-# value lands in the cache key on every builder version.
-#
-# This layer sits after the agent-browser/playwright installs on purpose: those
-# download Chrome for Testing and Chromium, and busting them costs minutes.
-# Isolated here, a fresh Claude Code costs one npm install.
+# Claude Code is intentionally unpinned; changing CLAUDE_CODE_CACHEBUST forces
+# Docker to resolve the current release. Keep this layer after the expensive
+# browser installs so refreshing Claude Code does not invalidate them.
 ARG CLAUDE_CODE_CACHEBUST=0
 RUN set -eux; \
     echo "claude-code cachebust: ${CLAUDE_CODE_CACHEBUST}"; \
@@ -190,8 +168,6 @@ COPY --chown=agent:agent context/.claude/settings.local.json /home/agent/.claude
 COPY --chown=agent:agent context/.claude/hooks/              /home/agent/.claude/hooks/
 COPY --chown=agent:agent context/.claude/plugins/            /home/agent/.claude/plugins/
 
-# Build-time install pilot — see .projex/2607100235-context-mode-build-time-install-pilot-plan.md.
-# (identical rationale to Dockerfile; runs before the npm loop so better-sqlite3 rebuilds for Linux)
 RUN set -eux; \
     claude plugin marketplace add mksglu/context-mode; \
     claude plugin install context-mode@context-mode --scope user

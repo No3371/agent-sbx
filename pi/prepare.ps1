@@ -1,12 +1,6 @@
-# Stages host pi payload into the build context:
-#   ~/.pi            -> ./context/.pi            (agent/settings.json, models-store.json, ...)
-#   ~/.agents/skills -> ./context/.agents/skills (cross-agent skills standard; pi
-#                       auto-loads ~/.agents/skills as an always-trusted user resource)
-#
-# Staging is INCREMENTAL via robocopy /MIR (same system as claude/codex
-# prepare.ps1): robocopy compares size + write time per file in native code and
-# transfers only what differs, so an unchanged host tree costs a stat sweep
-# instead of a full re-copy. /MIR also purges dest entries whose source is gone.
+# Stage ~/.pi to ./context/.pi and ~/.agents/skills to
+# ./context/.agents/skills. robocopy /MIR updates incrementally and purges
+# destination entries removed from the source.
 
 [CmdletBinding()]
 param(
@@ -23,13 +17,8 @@ $credentialExcludePatterns = @(
     '*.key', '*.pem', '*.token', '*.credentials',
     '*.p12', '*.pfx'
 )
-# mcp-auth is where pi MCP tooling (e.g. pi-mcp-extension) writes OAuth tokens
-# as <sha>.json — names the credential patterns above can't match, so exclude
-# the dir outright in case the host ever grows one. (The suite's own MCP
-# bridge, pi-mcp-adapter, keeps tokens in the OS credential store, not files.)
-# sessions holds host conversation transcripts (~/.pi/agent/sessions and
-# per-profile dirs like ~/.pi/context-mode/sessions) — never bake those into a
-# shareable image, matching the claude/codex suites' session-history exclusion.
+# Exclude mcp-auth because hashed OAuth-token filenames evade credential-name
+# filters, and exclude sessions because transcripts must not enter an image.
 $excludedDirectoryNames = @('.github', '.git', 'node_modules', 'mcp-auth', 'sessions')
 
 function Test-CredentialFileName([string]$name) {

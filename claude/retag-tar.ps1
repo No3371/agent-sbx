@@ -13,7 +13,7 @@
 .PARAMETER NewTag
     Target image tag (e.g. docker.io/user/img:v1).
 .PARAMETER Engine
-    Container engine to run the alpine helper with (podman or docker). Default: podman.
+    Container engine to run the alpine helper with (podman or docker). Default: docker.
 #>
 param(
     [Parameter(Mandatory)] [string] $Tar,

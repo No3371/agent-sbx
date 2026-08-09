@@ -1,22 +1,6 @@
-# Custom pi sandbox template
-#   - Base: debian:bookworm-slim (glibc) — agent-browser / playwright /
-#     codegraph use their standard prebuilt (glibc) binaries.
-#   - pi installed at BUILD TIME via npm (@earendil-works/pi-coding-agent),
-#     pinned.
-#   - Node 25 (NodeSource) + pnpm (global npm install); runs as root, like
-#     omp/ (unlike the claude/codex templates' non-root agent user).
-#   - Host ~/.pi (agent/settings.json, agent/models-store.json, skills,
-#     packages, ...) and ~/.agents/skills (cross-agent skills standard,
-#     auto-loaded by pi as an always-trusted user resource) staged by
-#     prepare.ps1 (auth.json and other credential-pattern files excluded).
-#
-# No docker/sandbox-templates:pi base exists (unlike claude/codex), so there's
-# no sbx integration here — this is the plain-docker path, run via run.ps1.
-# Host auth (~/.pi/agent/auth.json) is bind-mounted at runtime by run.ps1;
-# nothing credential-related is baked into the image.
-#
-# Build context expects ./context/.pi and ./context/.agents/skills populated
-# by prepare.ps1.
+# Pi sandbox built on Debian/glibc with pinned npm tooling. prepare.ps1 stages
+# Pi and cross-agent configuration while excluding credentials. run.ps1 mounts
+# host authentication at run time; credentials are never baked into the image.
 
 FROM debian:bookworm-slim
 
@@ -24,8 +8,7 @@ USER root
 
 ARG NODE_MAJOR=25
 ARG PI_VERSION=0.84.1
-# Pinned per .projex/2608081905-pi-mcp-adapter-install-audit.md (APPROVED —
-# pin exact version, re-audit on bump).
+# Pin the audited adapter version and re-audit before upgrading it.
 ARG PI_MCP_ADAPTER_VERSION=2.21.1
 ARG PI_SUBAGENTS_VERSION=0.14.3
 ARG PI_LENS_VERSION=3.8.74
@@ -38,13 +21,8 @@ ARG GO_VERSION=1.26.3
 ARG INSTALL_GO=1
 ARG INSTALL_PYTHON=1
 
-# Baseline coding-agent tools + Node 25 via NodeSource (mirrors codex/). Install
-# pi + agent tooling in the same layer. On glibc every one of these is a
-# stock npm install — no musl symlink/env workaround (contrast the Alpine base).
-# pnpm comes from npm directly (not corepack): Node 25 dropped bundled corepack,
-# and these sandboxes don't pin package-manager versions per project via the
-# package.json "packageManager" field, so corepack's shim indirection buys us
-# nothing over a plain global pnpm.
+# Install Node 25 through NodeSource and stock npm packages on glibc. Install
+# pnpm directly because Node 25 no longer bundles corepack.
 RUN set -eux; \
     for flag in "$INSTALL_GO" "$INSTALL_PYTHON"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
     apt-get update; \
@@ -148,31 +126,17 @@ COPY context/.pi/ /root/.pi/
 # from host ~/.agents/skills by prepare.ps1.
 COPY context/.agents/skills/ /root/.agents/skills/
 
-# MCP bridge — pi has no built-in MCP support. The adapter exposes one
-# ~200-token proxy tool with on-demand discovery instead of bridging every
-# server's tool definitions into context, and reads standard MCP config
-# (.mcp.json, ~/.config/mcp/mcp.json) plus the pi override files
-# (~/.pi/agent/mcp.json baked from host, .pi/mcp.json via the workspace
-# mount). Own layer, after the host-context COPY so the install registers
-# into the staged config rather than being overwritten by it. MCP OAuth
-# tokens go to an OS credential store and the adapter fails closed without
-# one (this container runs none) — no token files exist to stage or mount;
-# bearer/env auth via run.ps1's env forwarding is the in-sandbox path.
+# Pi needs the MCP adapter for MCP support. Install it after copying host context
+# so registration is not overwritten. This container has no OS credential store,
+# so MCP OAuth fails closed; use bearer or runtime environment authentication.
 RUN pi install "npm:pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}"
 RUN pi install "npm:context-mode@${CONTEXT_MODE_VERSION}"
 RUN pi install "npm:@tintinweb/pi-subagents@${PI_SUBAGENTS_VERSION}"
 RUN pi install "npm:pi-lens@${PI_LENS_VERSION}"
 
-# Wire codegraph into pi through that MCP bridge (`codegraph install` has no
-# --target=pi): merge a `codegraph serve --mcp` stdio entry — codegraph's own
-# manual-config snippet — into the global pi-override mcp.json, preserving
-# whatever the host staged (host's own codegraph entry wins if present). No
-# `transport` field: the adapter infers stdio from `command`. lazy-keep-alive
-# lifecycle: no startup cost in sessions that never query the graph; after
-# the first query the server stays resident with auto-reconnect (codegraph's
-# connect-time index catch-up isn't free, so don't pay it repeatedly).
-# Strict jq: a host-staged mcp.json with comments fails the build loudly
-# rather than silently shipping an unmergeable config.
+# Configure codegraph through the MCP bridge because its installer has no Pi
+# target. Preserve a host-staged entry when present and use lazy-keep-alive to
+# avoid startup and repeated reconnect costs. Strict jq rejects non-JSON input.
 RUN set -eux; \
     cfg=/root/.pi/agent/mcp.json; \
     entry='{"command":"codegraph","args":["serve","--mcp"],"lifecycle":"lazy-keep-alive"}'; \

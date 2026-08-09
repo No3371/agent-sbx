@@ -1,21 +1,7 @@
-# Stages host ~/.codex payload into ./context/.codex for the podman build.
-# Maps: config.toml (rewritten + filtered), AGENTS.md, skills/,
-#       vendor_imports/skills/, plugins/cache/ (installed plugin bundles).
-# Excludes: auth.json, sessions, sqlite state, caches, sandbox dirs, memories,
-#           machine-local marker/state files, plugins/data/ and plugin
-#           staging dirs — sbx manages auth, the rest is host-only runtime
-#           state that has no business in a template image.
-#
-# config.toml rewriting rules (applied before writing to context):
-#   - Drops: [windows] (Windows Sandbox config, meaningless in Linux container)
-#   - Drops: [projects.*] (machine-local trust entries)
-#   - Drops: ALL [marketplaces.*] (Codex re-registers these at runtime; baking
-#            local-source marketplaces is broken because .tmp/ isn't staged)
-#   - Drops: [plugins."*@openai-primary-runtime"] (plugins whose marketplace is
-#            being dropped — keeping them would dangle)
-#   - Keeps: top-level keys (model, model_reasoning_effort, etc.)
-#   - Keeps: [plugins."*@openai-bundled"], [plugins."*@openai-curated"]
-#   - Keeps: [mcp_servers.*] with command path rewritten Win → bare name
+# Stage host Codex configuration, instructions, skills, and plugin bundles into
+# ./context/.codex. Credentials, sessions, caches, sandbox state, and machine-
+# local state stay on the host. Remove Windows and local trust/marketplace TOML
+# sections, dangling plugins, and rewrite Windows MCP command paths.
 
 [CmdletBinding()]
 param(
@@ -53,13 +39,8 @@ $credentialExcludePatterns = @(
 )
 $excludedDirectoryNames = @('.github', '.git', 'node_modules')
 
-# Staging is incremental. robocopy compares size + write time in native code
-# and transfers only changes; /MIR also purges destination entries removed from
-# the source, preserving the old clean-rebuild result without paying for a full
-# delete and per-file PowerShell copy.
-#
-# robocopy exit codes: 0 = nothing to do | 1 = copied | 2 = purged extras |
-# 3 = both | >= 8 = real failure. Everything below 8 is success.
+# robocopy /MIR stages incrementally and purges removed source entries.
+# Exit codes below 8 are success; 8 and above are failures.
 if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) {
     throw "robocopy not found on PATH — required for staging."
 }
@@ -273,8 +254,6 @@ foreach ($lineRaw in $rawLines) {
             continue
         }
 
-        # Kept header: emit a single blank separator line before it (preserves
-        # readability and avoids stacking blanks).
         if ($outLines.Count -gt 0) {
             if ($outLines[$outLines.Count - 1] -ne '') {
                 $outLines.Add('') | Out-Null
@@ -287,8 +266,6 @@ foreach ($lineRaw in $rawLines) {
 
     if ($skipSection) { continue }
 
-    # In-section line. Rewrite mcp_servers command paths; everything else passes
-    # through verbatim (preserves user comments, ordering, formatting).
     $rewritten = Rewrite-TomlLine $line $currentSection
     $outLines.Add($rewritten) | Out-Null
 }

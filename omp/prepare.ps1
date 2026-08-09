@@ -1,23 +1,6 @@
-# Stages host ~/.claude payload into ./context/.claude for the podman build.
-# Maps: settings.json (rewritten + filtered), skills, agents, tools, commands,
-#       hooks, plugins.
-# Excludes: .credentials.json, .claude.json, sessions, history, projects,
-#           cache, statsig, telemetry — sbx manages those.
-#
-# Settings filtering rules (applied before writing to context):
-#   - Keeps: enabledPlugins (plugins/ is now baked into image)
-#   - Strips: skipAutoPermissionPrompt (permission posture is a template-author
-#             decision, not silently inherited from host)
-#   - statusLine: command rewritten — git-bash node path → bare `node`,
-#             cygpath -w wrappers dropped. Kept as-is otherwise.
-#   - Hooks: each hook command is path-rewritten (Win → Linux), then the hook
-#             entry is dropped if its command references a path that does NOT
-#             exist in the staged image FS layout.
-#   - mcpServers: commands path-rewritten (Win npx-cache → bare name); entries
-#             with no Linux mapping are dropped with a warning.
-#   - project .mcp.json: merged from repo root (one level up from this script),
-#             command paths rewritten — covers project-level MCP installs like
-#             context-mode. Project entries win over global on name collision.
+# Stage host ~/.omp agent and plugin payloads into ./context/.omp. Credential
+# files, repository metadata, and host node_modules are excluded; staged shell
+# scripts are normalized for Linux.
 
 [CmdletBinding()]
 param(
@@ -48,19 +31,8 @@ function Test-CredentialFileName([string]$name) {
     return $false
 }
 
-# Staging is INCREMENTAL. This used to delete each stage dir and re-copy the host
-# tree file-by-file via Copy-Item — ~2350 files / 32MB for a typical ~/.claude,
-# and PowerShell's per-cmdlet overhead dominates when the files are this small.
-# robocopy compares size + write time per file in native code and transfers only
-# what differs, so an unchanged host tree costs a stat sweep instead of a full
-# re-copy (measured 21.1s -> 0.6s here; the gap is wider on a cold file cache or
-# with on-access AV inspecting 32MB of fresh writes).
-#
-# /MIR also purges dest entries whose source is gone — the property the old
-# delete-then-copy shape bought, kept without paying the deletion.
-#
-# robocopy exit codes: 0 = nothing to do | 1 = copied | 2 = purged extras |
-# 3 = both | >= 8 = real failure. Everything below 8 is success.
+# robocopy /MIR stages incrementally and purges destination entries removed from
+# the source. Exit codes below 8 are success; 8 and above are failures.
 if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) {
     throw "robocopy not found on PATH — required for staging."
 }

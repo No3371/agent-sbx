@@ -1,26 +1,10 @@
-# Run the baked opencode-custom image without sbx.
+# Run OpenCode with the current directory as /workspace. Persist the individual
+# host auth file, model state, project-local session database, and named caches;
+# authenticate with `opencode auth login` on first run. Host node_modules is
+# masked when Linux-native dependencies are required.
 #
-# Mounts the current directory as the container workspace and drops into
-# `opencode` interactively. Persists auth by bind-mounting the single host
-# auth file (NOT the whole ~/.local/share/opencode dir, which would shadow
-# the container's own state dirs).
-#
-# First run: authenticate once inside the container (`opencode auth login`);
-# the token lands in the native host auth.json and persists. The native state
-# directory is also mounted, so the selected model/variant follows into it.
-#
-# Persists across --rm: provider auth + model preferences (host
-# ~/.local/share/opencode/auth.json + ~/.local/state/opencode), session history
-# (project-local .opencode/opencode.db, opencode's SQLite store),
-# and package-manager / opencode plugin caches (named volumes). When the host
-# workspace has a node_modules, it is masked with a per-project named volume and
-# Linux-native deps are reinstalled inside (host node_modules left untouched).
-#
-# SECURITY: .local/share/opencode/auth.json carries live provider credentials.
-# Treat it like an SSH key — never commit or share it (any other
-# process/container reading %USERPROFILE% can read the plaintext token). The project-local
-# .opencode/opencode.db can hold conversation content — add `.opencode/` to the
-# project's .gitignore if reusing this launcher outside this repo.
+# Treat auth.json like an SSH key and never commit it. The .opencode session
+# database may contain sensitive conversations and should also be ignored.
 
 [CmdletBinding()]
 param(
@@ -36,12 +20,8 @@ if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) {
     throw "$Engine not found on PATH"
 }
 
-# Host timezone -> container TZ, so logs/timestamps match the developer's
-# clock instead of defaulting to UTC. TimeZoneInfo.Local.Id is already an IANA
-# name on non-Windows PowerShell; TryConvertWindowsIdToIanaId (.NET 6+, i.e.
-# pwsh 7+) converts Windows-style ids. Windows PowerShell 5.1 (.NET Framework
-# lacks that method) and ids the runtime can't map fall back to a static CLDR
-# windowsZones table; only if that also misses does the container stay on UTC.
+# Convert the host timezone to IANA for container timestamps, using the CLDR
+# mapping when the runtime cannot convert a Windows identifier.
 $tz = $null
 try {
     $localId = [System.TimeZoneInfo]::Local.Id
@@ -127,52 +107,22 @@ if (-not (Test-Path $authFile)) {
 }
 if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Force $stateDir | Out-Null }
 
-# Project-local session history. opencode 1.17 stores all sessions in a single
-# SQLite DB at ~/.local/share/opencode/opencode.db (verified against opencode
-# 1.17.14 — NOT a per-project storage/ dir; the plan's assumption 4 was wrong).
-# Bind-mount just that DB file (individual-path, like auth.json — never the
-# whole share dir, which would shadow baked state and collide with the auth
-# file-mount) into the project's .opencode/ so history travels with the project
-# and survives --rm. A 0-byte file is a valid empty SQLite DB. The -wal/-shm
-# sidecars live in the container and checkpoint into the .db on clean exit; a
-# hard kill can lose the most recent uncommitted turn.
+# Bind-mount the single session SQLite database into the project so history
+# survives --rm without shadowing other baked state. WAL sidecars checkpoint on
+# clean exit; a hard kill can lose the latest uncommitted turn.
 $historyDb     = Join-Path $Workspace '.opencode\opencode.db'
 $historyParent = Split-Path $historyDb -Parent
 if (-not (Test-Path $historyParent)) { New-Item -ItemType Directory -Force $historyParent | Out-Null }
 if (-not (Test-Path $historyDb))     { [System.IO.File]::WriteAllBytes($historyDb, @()) }
 
-# Shared package-manager + opencode plugin caches (named volumes, per-suite).
-# Namespaced with an `opencode-` prefix so each suite keeps its own caches: this
-# store never shares a volume with the claude template's for the same name —
-# independent lifecycles, not a base/libc difference (redteam F4). Fresh named volumes mount root:root; chown every one the non-root
-# agent writes to — npm cache (~/.npm), pnpm store, opencode's Bun plugin cache
-# (~/.cache/opencode) — each launch (redteam F5). Unlike claude, this image does
-# not pre-warm ~/.npm, so a fresh opencode-pm-cache volume is root:root and npm
-# install fails without this chown. pnpm otherwise defaults its store into
-# /workspace, so relocate it to the HOME volume. pnpm baked in (Step 2).
-# `/home/agent/.cache` itself is also chowned. The image bakes this directory at
-# build time: `playwright install --with-deps chromium` runs as root with
-# HOME=/home/agent, creating `.cache/ms-playwright` (and the `.cache` parent)
-# root:root, and the Dockerfile chowns it back to agent right after (D1). So the
-# parent already exists agent-owned in the image before the container starts. The
-# runtime chown here fixes ownership on top of that baked-in state rather than a
-# directory the image never touched: run.ps1 mounts the `opencode-cache` named
-# volume onto the nested `.cache/opencode` leaf, and a fresh volume mounts
-# root:root — this is the only one of the three suites that mounts anything under
-# `.cache/`, so it's the only one exposed to it. F5's chown covered the volume
-# leaf but not the parent; any tool that caches to a sibling under `~/.cache`
-# needs the parent agent-owned to `mkdir` there. With D1's build-time bake the
-# parent is already agent-owned, so chowning it here is a defensive no-op; the
-# leaf chown stays load-bearing for the fresh volume.
+# Use suite-specific named caches. Fresh volumes are root-owned, so restore
+# ownership for the non-root agent. Relocate pnpm's store from /workspace into
+# its cache volume; keep the parent cache directory writable for sibling tools.
 $pmSetup = "sudo chown agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.pnpm-store /home/agent/.cache/opencode 2>/dev/null; pnpm config set store-dir /home/agent/.pnpm-store 2>/dev/null || true;"
 
-# node_modules boundary: a host (Windows) node_modules bind-mounted into the
-# Linux container carries win32-native binaries that crash here. Only when the
-# host actually has one do we mask it with a per-project NAMED volume (empty on
-# first run) and install Linux-native deps inside — namespaced `opencode-nmvol-`
-# so it never shares the claude template's volume for the same workspace
-# (per-suite isolation, redteam F4). A fresh named volume mounts root:root while we run as
-# agent, so chown it before the empty-check. Absent -> plain bind-mount.
+# If the host has Windows node_modules, mask it with a per-project, suite-specific
+# named volume because native binaries cannot run in Linux. Chown a fresh volume
+# and install Linux dependencies when empty; otherwise keep the plain bind mount.
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
 if ($maskNodeModules) {
