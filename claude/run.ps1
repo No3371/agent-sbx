@@ -75,7 +75,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Image     = 'cc-custom:v1',
+    [string]$Image     = 'sbx-cc:v1',
     [string]$Engine    = 'docker',
     [string]$Workspace = $PWD.Path,
     [switch]$GPU,

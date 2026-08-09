@@ -11,8 +11,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Image,            # e.g. cc-custom:v1
+    [string]$Image = "sbx-cc:v1",            
 
     [string]$Tar,              # optional path to export tar (e.g. .\cc-custom.tar)
     [switch]$Retag,            # after Tar export, rewrite localhost/-prefixed manifest tags
