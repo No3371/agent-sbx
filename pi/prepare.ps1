@@ -50,31 +50,50 @@ $rcExcludeFiles = @('/XF', '.keep', '*.exe', '*.dll') + $credentialExcludePatter
 # 3 = both | >= 8 = real failure. Everything below 8 is success.
 function Invoke-RobocopyStage([string]$src, [string]$dst, [string]$label) {
     if (Test-Path $src) {
-        robocopy $src $dst @rcFlags @rcExcludeDirs @rcExcludeFiles | Out-Null
-        $rc = $LASTEXITCODE
-        $global:LASTEXITCODE = 0
-        if ($rc -ge 8) { throw "robocopy failed staging ${label}: exit $rc" }
-        $verdict = switch ($rc) {
-            0       { 'unchanged' }
-            1       { 'updated' }
-            2       { 'stale entries purged' }
-            3       { 'updated + purged' }
-            default { "exit $rc" }
+        $item = Get-Item $src
+
+        if ($item.PSIsContainer) {
+            # Directory source
+            robocopy $src $dst @rcFlags @rcExcludeDirs @rcExcludeFiles | Out-Null
+            $rc = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+
+            if ($rc -ge 8) {
+                throw "robocopy failed staging ${label}: exit $rc"
+            }
+
+            $verdict = switch ($rc) {
+                0       { 'unchanged' }
+                1       { 'updated' }
+                2       { 'stale entries purged' }
+                3       { 'updated + purged' }
+                default { "exit $rc" }
+            }
+
+            Write-Host "[prepare] $label -> $verdict"
         }
-        Write-Host "[prepare] $label -> $verdict"
-    } else {
+        else {
+            # Single-file source
+            New-Item -ItemType Directory -Path $dst -Force | Out-Null
+
+            $target = Join-Path $dst $item.Name
+            Copy-Item -Path $src -Destination $target -Force
+
+            Write-Host "[prepare] $label -> updated"
+        }
+    }
+    else {
         Write-Host "[prepare] no $label on host — staging empty dir"
     }
 
-    # Stage dir must exist even when the host has none, so the Dockerfile COPY
-    # shape stays stable; the .keep placeholder stops BuildKit/Buildah seeing an
-    # empty COPY source. Written after robocopy so /MIR cannot race it.
+    # Stage dir must always exist so the Dockerfile COPY shape stays stable.
     New-Item -ItemType Directory -Path $dst -Force | Out-Null
     Set-Content -Path (Join-Path $dst '.keep') -Value '' -Encoding UTF8
 }
-
 Invoke-RobocopyStage $HostPiDir           $Destination       '~/.pi'
 Invoke-RobocopyStage $HostAgentsSkillsDir $SkillsDestination '~/.agents/skills'
+Invoke-RobocopyStage '$env:USERPROFILE\.pi-lens\config.json' (Join-Path $PSScriptRoot 'context\.pi-lens\config.json') '~/.pi-lens'
+
 
 $stagedRoots = @($Destination, $SkillsDestination)
 
