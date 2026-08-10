@@ -1,6 +1,6 @@
 # Modernize Codex sandbox suite
 
-> **Status:** Blocked
+> **Status:** Ready
 > **Author:** openai-codex/gpt-5.6-sol (plan-projex)
 > **Source:** Direct request — modernize Codex suite to parity with updated suites, including root runtime and robocopy staging
 > **Related Projex:** 2608030651-codex-incremental-context-staging-patch.md (robocopy baseline) | 2608030706-coding-agent-sandbox-suite-contract-def.md (shared contract; observed state predates recent Pi/OpenCode updates) | 2608030408-c-c-combined-suite-plan.md (downstream; must rebase Codex assumptions) | 2608030409-retire-merged-codex-suite-plan.md (downstream retirement, dependency-gated) | 2608101607-codex-suite-modernization-plan-redteam.md (revision trigger) | 2608101613-codex-suite-modernization-plan-stress.md (revision trigger)
@@ -12,8 +12,8 @@
 
 Move the standalone Codex image from passwordless-sudo `agent` to root, adopt Pi's current file-or-directory `robocopy` transport for Codex's filtered preparation, extend it to the shared host `~/.agents/skills` tree, and align root-home cache/bootstrap behavior with updated suite patterns. Preserve Codex-specific TOML/plugin transforms, fresh device authentication, approval bypass, browser tooling, and ephemeral auth/history semantics. Root runtime does not authorize root execution of host-derived package lifecycle scripts.
 
-**Scope:** standalone `codex/` suite implementation/docs plus committed, synthetic-only contract harnesses and acceptance-receipt template; no combined-suite, root-contract, retirement, package-catalog, or image-name migration.
-**Estimated Changes:** 11 files — `Dockerfile`, `prepare.ps1`, `build.ps1`, `run.ps1`, `README.md`, new suite-local `.gitignore`, four contract harnesses, acceptance-receipt template.
+**Scope:** standalone `codex/` suite implementation/docs; no combined-suite, root-contract, retirement, package-catalog, image-name migration, acceptance harness, or acceptance-receipt artifact.
+**Estimated Changes:** 6 files — `Dockerfile`, `prepare.ps1`, `build.ps1`, `run.ps1`, `README.md`, new suite-local `.gitignore`.
 
 ---
 
@@ -32,8 +32,7 @@ Codex already has a verified incremental robocopy implementation for `skills/`, 
 - [ ] `prepare.ps1` mirrors host `~/.agents/skills` → `codex/context/.agents/skills` with native robocopy contract, recursive SCM/native-dependency/credential exclusions, missing-source placeholder, stale-exclusion cleanup, LF normalization, canonical source/destination containment, no reparse traversal, and collision failure between skill roots; both generated context roots are Git-ignored.
 - [ ] `build.ps1` forwards independent host/source overrides for both `.codex` and `.agents/skills` preparation without changing default build/export semantics.
 - [ ] `run.ps1` uses root-home, generation-aware Codex volumes; no `sudo`/`chown`; mounts only workspace plus package caches; performs fresh `codex login --device-auth` before bypass mode.
-- [ ] Committed synthetic-only prepare/build/run/image harnesses and a receipt template bind a clean source tree, staged manifest, package inventory, exact commands, engine/platform, image digest, redacted manual attestation, and expiry.
-- [ ] Docker Desktop on Windows is the sole supported release row; live create/edit/delete, host owner/mode, and fresh-volume checks pass there. Podman remains unadvertised until it has an equivalent recorded row.
+- [ ] Docker Desktop on Windows remains the intended release-supported engine/platform. Podman remains unadvertised until equivalent validation establishes its support contract.
 - [ ] `README.md` exactly describes root privilege, trusted-payload limitation, staged inputs, cache names/generation, exclusions, Docker-default support, unsupported Podman status, and unchanged auth/history boundaries.
 
 ### Out of Scope
@@ -69,16 +68,11 @@ Codex already has a verified incremental robocopy implementation for `skills/`, 
 | `codex/build.ps1` | Prepare/build/export orchestration | Add host-skills source/destination overrides and forward both to preparation |
 | `codex/run.ps1` | Runtime mounts/bootstrap | Use root cache paths, Codex-specific volume namespace, no ownership repair/userns remap |
 | `codex/README.md` | Operator/security contract | Document root/payload/engine/cache boundaries; fix stale engine/user/path claims |
-| `codex/tests/prepare-contract.ps1` | Synthetic staging harness | Fixture matrix: filtering, containment, reparse, collisions, manifests, zero-mutation failures |
-| `codex/tests/build-contract.ps1` | Build-driver harness | Mock prepare/engine argv and source/destination forwarding |
-| `codex/tests/run-contract.ps1` | Launcher harness | Mock Docker argv, cache-generation, auth/mount boundary checks |
-| `codex/tests/image-contract.sh` | Image harness | Immutable root/plugin-integrity/browser/skill probes; hostile lifecycle sentinel |
-| `codex/tests/acceptance-receipt.template.json` | Evidence schema | Clean-tree/source-input-image/manual-attestation receipt with expiry |
 
 ### Dependencies
 
-- **Requires:** named Windows PowerShell 5.1 + `robocopy.exe` runner; named Docker Desktop/Windows runner; synthetic-only fixture host; named operator for redacted device-auth/TUI smoke; all recorded in the receipt before execution starts. Current Linux environment has none of Docker, Podman, PowerShell, or robocopy, so it cannot clear these gates.
-- **Blocks:** this Plan remains Blocked until the required runners/operator are provisioned and the revised Plan is committed; `2608030408-c-c-combined-suite-plan.md` remains blocked until this Plan's unexpired receipt exists; retirement remains blocked behind combined-suite acceptance.
+- **Requires:** implementation follows the stated Windows PowerShell 5.1/`robocopy.exe` and Docker Desktop/Windows contracts when those environments are used. Current Linux environment has none of Docker, Podman, PowerShell, or robocopy; this does not block implementation under the waived Step 0 gate.
+- **Blocks:** no acceptance-resource or receipt gate blocks this Plan. `2608030408-c-c-combined-suite-plan.md` and retirement retain their own dependency and acceptance decisions; this revision does not grant them acceptance evidence.
 - **No code dependency:** dirty root/Pi work and active `projex/*` branch are isolated through required worktree mode.
 
 ### Constraints
@@ -90,7 +84,7 @@ Codex already has a verified incremental robocopy implementation for `skills/`, 
 - Every Dockerfile path, generated TOML path, launcher mount, cache path, and doc path must migrate atomically from `/home/agent` to `/root` where it represents image/runtime state.
 - Root execution makes rm-guard easier to bypass; README must state accident protection only, not privilege/security isolation.
 - Prepared host trees are explicitly trusted local build inputs, not proven secret-free by filename filtering. Verification uses synthetic data only; real trees are never inspected for content.
-- Docker Desktop on Windows is the release support contract. Podman may receive fake-argv coverage but cannot be documented as supported without a passing live platform row and receipt.
+- Docker Desktop on Windows is the intended release support contract. Podman may receive fake-argv coverage but cannot be documented as supported without equivalent live platform validation.
 
 ### Assumptions
 
@@ -101,7 +95,7 @@ Codex already has a verified incremental robocopy implementation for `skills/`, 
 
 ### Impact Analysis
 
-- **Direct:** image layer ownership/home paths; two prepared context roots; containment/inventory; build parameter pass-through; runtime cache mounts/bootstrap; docs; committed contract harnesses/receipt.
+- **Direct:** image layer ownership/home paths; two prepared context roots; containment/inventory; build parameter pass-through; runtime cache mounts/bootstrap; docs.
 - **Adjacent:** plugin marketplace paths embedded in generated `config.toml`; agent-browser/Playwright cache locations; named volume continuity; Podman identity behavior.
 - **Downstream:** combined-suite plan must consume the new root/skills baseline; retirement inventory file roster stays valid but its replacement-parity evidence must use the modernized source.
 - **Security:** root simplifies local volume/tool operation but removes the weak speed bump of non-root execution. Credential exclusion and no-auth-mount boundaries remain mandatory.
@@ -112,32 +106,15 @@ Codex already has a verified incremental robocopy implementation for `skills/`, 
 
 ### Overview
 
-Provision acceptance ownership first, then migrate image/runtime paths, extend preparation without weakening Codex transforms, forward new preparation controls through the build driver, and update operator docs. Commit harnesses with implementation; bind every acceptance row to immutable image evidence before interactive auth.
+Migrate image/runtime paths, extend preparation without weakening Codex transforms, forward new preparation controls through the build driver, then update operator docs. Step 0's acceptance-resource, harness, and receipt gate is waived; implementation verification remains scoped to product behavior.
 
-### Step 0: Provision acceptance resources and durable evidence
+### Step 0: Provision acceptance resources and durable evidence — superseded
 
-**Objective:** establish owned runners, release support row, synthetic harnesses, and a receipt before mutating suite behavior.
-**Confidence:** High.
-**Depends on:** None.
+**Status:** Superseded by direct human waiver.
 
-**Files:**
+This gate would have required named Windows/Docker/operator resources, committed synthetic harnesses, and a durable acceptance receipt before implementation. It is not an implementation prerequisite or planned file scope.
 
-- `codex/tests/prepare-contract.ps1`
-- `codex/tests/build-contract.ps1`
-- `codex/tests/run-contract.ps1`
-- `codex/tests/image-contract.sh`
-- `codex/tests/acceptance-receipt.template.json`
-
-**Changes:**
-
-1. Name the Windows PowerShell 5.1/robocopy runner, Docker Desktop/Windows runner, and interactive operator in the receipt preflight; reject blank owner, unavailable command, dirty source tree, or expired receipt.
-2. Add standalone synthetic-only harnesses; do not require Pester or inspect real host inputs. Fixtures create and remove their own temp trees, mock engine calls, and assert zero mutation on rejected paths.
-3. Define receipt fields: clean commit/tree SHA, harness hashes and exact commands, staged-manifest/package-script-inventory hashes, resolved base/package versions, image digest, engine/platform versions, per-row result, redacted manual attestation/signer, creation time, expiry, and downstream-consumption gate.
-4. Declare Docker Desktop on Windows the only supported release row. Podman is not documented as supported until a separate receipt records equivalent live workspace and volume results.
-
-**Verification:** each harness executes on its named runner; receipt template validates locally; preflight records required resources before status returns to `Ready`.
-
-**If this fails:** retain `Blocked`; do not substitute static checks, unowned temporary scripts, or a favorable-engine result.
+**Trigger:** human directive, “what are these enterprise bs? Waive step0”.
 
 ---
 
@@ -180,7 +157,7 @@ COPY context/.agents/skills/ /root/.agents/skills/
 3. Remove `node` rename/user creation, sudo-group/sudoers setup, agent-home directory ownership, global-binary symlinks into agent home, and all `chown agent:agent` operations.
 4. Install agent-browser and Playwright in root's default cache; verify browser binaries remain available offline.
 5. Copy generated non-plugin `.codex` assets to `/root/.codex`; add prepared shared skills at `/root/.agents/skills`; retain repo-owned agent-browser skill under `/root/.codex/skills/agent-browser`.
-6. Copy staged plugin packages to a dedicated non-root build location; create a no-login dependency user; run only `npm` with lifecycle scripts disabled (`--ignore-scripts`) as that user; reject package roots missing the expected receipt inventory; return the resulting files to `/root/.codex/plugins/cache` only after this phase. Do not run host-derived scripts as root or add a root compatibility exception.
+6. Copy staged plugin packages to a dedicated non-root build location; create a no-login dependency user; run only `npm` with lifecycle scripts disabled (`--ignore-scripts`) as that user; reject package roots missing the expected package inventory; return the resulting files to `/root/.codex/plugins/cache` only after this phase. Do not run host-derived scripts as root or add a root compatibility exception.
 7. Hash/assert critical root-owned binaries, guard, profile files, and package inventory after plugin handling; hostile fixture lifecycle markers must be absent.
 8. Set final working directory `/workspace`; preserve `ENTRYPOINT ["tini", "--"]` and Codex bypass `CMD`.
 
@@ -239,7 +216,7 @@ $imageCodexHome = '/root/.codex'
 
 **Rationale:** reusing the verified helper retains incremental performance and stale-entry deletion. Whole-tree mirroring would copy sessions/state and overwrite generated config, so parity applies to transport/cleanup—not Codex's source selection. Suite-local ignores prevent the new generated root from escaping the existing root-only `.codex` ignore.
 
-**Verification:** Windows PowerShell 5.1 AST parse; committed native-robocopy harness runs file cold/warm/change/missing cases plus directory cold, warm, changed+purged, missing optional skills, stale excluded-dir, stale credential, CRLF shell, top-level/nested `.system`, collision, malformed skill, source/destination root/equality/ancestor/overlap, source-tree destination, reparse, and robocopy-failure cases. File fixtures prove only the named leaf reaches the destination—no source-parent sibling or `.keep` leakage—and missing `AGENTS.md` produces only Codex's empty stub. Every rejected path asserts zero mutation. Compare normalized path/size/SHA-256 manifests for existing `.codex` outputs except expected `/root` marketplace source; prove shared sentinel appears only without a collision, excluded sentinels do not, package/script inventory is complete, and `>=8` terminates. `git check-ignore` must match both generated roots while a tracked suite file remains visible.
+**Verification:** Windows PowerShell 5.1 AST parse; synthetic native-robocopy checks cover file cold/warm/change/missing cases plus directory cold, warm, changed+purged, missing optional skills, stale excluded-dir, stale credential, CRLF shell, top-level/nested `.system`, collision, malformed skill, source/destination root/equality/ancestor/overlap, source-tree destination, reparse, and robocopy-failure cases. File fixtures prove only the named leaf reaches the destination—no source-parent sibling or `.keep` leakage—and missing `AGENTS.md` produces only Codex's empty stub. Every rejected path asserts zero mutation. Compare normalized path/size/SHA-256 manifests for existing `.codex` outputs except expected `/root` marketplace source; prove shared sentinel appears only without a collision, excluded sentinels do not, package/script inventory is complete, and `>=8` terminates. `git check-ignore` must match both generated roots while a tracked suite file remains visible.
 
 **If this fails:** delete only synthetic destinations and revert `prepare.ps1`; never inspect or clean the operator's real `.codex`/`.agents` trees. If Codex does not discover `/root/.agents/skills`, stop rather than baking undiscoverable duplicate content.
 
@@ -277,7 +254,7 @@ $imageCodexHome = '/root/.codex'
 
 **Rationale:** isolated fixtures/worktrees must not depend on or overwrite the operator's real shared-skills stage.
 
-**Verification:** PowerShell 5.1 AST parse; mock `prepare.ps1`/engine argv harness proves default invocation, all four overrides, partial overrides, `-SkipPrepare`, and unchanged build/export validation. Expected: no empty-value flags and no host path printed through engine argv.
+**Verification:** PowerShell 5.1 AST parse; mocked `prepare.ps1`/engine argv checks prove default invocation, all four overrides, partial overrides, `-SkipPrepare`, and unchanged build/export validation. Expected: no empty-value flags and no host path printed through engine argv.
 
 **If this fails:** revert `build.ps1`; staged fixture outputs are disposable. Do not alter preparation defaults to compensate for a forwarding bug.
 
@@ -319,7 +296,7 @@ $nmInstall = "if [ -z ... ]; then ...; fi;"
 
 **Rationale:** root should remove ownership bootstrap, not keep sudo as dead code. Suite names prevent accidental coupling to legacy generic volumes while leaving old volumes untouched for manual cleanup.
 
-**Verification:** AST parse + committed fake-engine argv capture for Docker/Podman, with/without host `node_modules`, changed lockfile, timezone, and GPU. Assert root cache paths, generation names, no `sudo|chown|/home/agent|--userns=keep-id`, no auth/state mount, explicit CodeGraph degradation signal, and unchanged device-auth/bypass command. On the supported Docker Desktop/Windows row, live smoke creates, edits, deletes, and host-verifies workspace files; writes fresh named volumes; records host owner/mode and receipt evidence.
+**Verification:** AST parse + fake-engine argv capture for Docker/Podman, with/without host `node_modules`, changed lockfile, timezone, and GPU. Assert root cache paths, generation names, no `sudo|chown|/home/agent|--userns=keep-id`, no auth/state mount, explicit CodeGraph degradation signal, and unchanged device-auth/bypass command. On Docker Desktop/Windows, live smoke creates, edits, deletes, and host-verifies workspace files; writes fresh named volumes; checks host owner/mode.
 
 **If this fails:** revert `run.ps1`; do not delete legacy/new named volumes automatically. Diagnose engine-specific rootless Podman mapping separately rather than silently restoring non-root behavior.
 
@@ -344,7 +321,7 @@ $nmInstall = "if [ -z ... ]; then ...; fi;"
 4. Dependency/cache section: `codex-nmvol-*`, `codex-pm-cache`, `/root/.npm`, no ownership repair; explain old generic volumes are orphaned but not auto-pruned.
 5. Layout/staging: use repo-relative `codex/` root; add `context/.agents/skills`; distinguish filtered Codex subtrees from shared-skills mirror; document missing-source placeholders, containment marker, stale exclusion cleanup, reparse rejection, collision failure, and inventory boundaries.
 6. Config transform section: marketplace sources now `/root/.codex/...`; every other drop/keep rule unchanged.
-7. Notes: root + approval bypass is for dedicated local use; staged data is explicitly trusted but filename filtering cannot prove arbitrary content secret-free; package scripts do not receive root authority; mutable base/unpinned Codex caveats, receipt expiry, Docker-only release support, and Podman non-support remain explicit.
+7. Notes: root + approval bypass is for dedicated local use; staged data is explicitly trusted but filename filtering cannot prove arbitrary content secret-free; package scripts do not receive root authority; mutable base/unpinned Codex caveats, Docker-only release support, and Podman non-support remain explicit.
 
 **Rationale:** root and additional host input materially change privilege, disclosure, cleanup, and reproducibility claims.
 
@@ -356,17 +333,16 @@ $nmInstall = "if [ -z ... ]; then ...; fi;"
 
 ## Verification Plan
 
-> Per-step checks prove local mechanics. Final checks bind prepared bytes, image identity, launcher argv, and user-visible behavior to one revision.
+> Per-step checks prove local mechanics. Step 0's durable evidence/receipt binding is waived; checks below remain implementation targets, not a pre-execution resource gate.
 
 ### Automated Checks
 
-- [ ] On the named Windows runner, parse all `.ps1` product/harness files with Windows PowerShell 5.1; zero syntax errors.
-- [ ] Committed native-robocopy harness passes cold/warm/change/delete/missing/failure/exclusion/credential/LF/collision/reparse/containment cases. Every invalid path asserts zero mutation; manifests contain only synthetic relative paths and hashes.
-- [ ] Build-driver harness captures defaults, all overrides, partial overrides, skip, no-cache, and output modes; no empty flags or source path reaches engine argv.
-- [ ] Launcher harness captures Docker/Podman argv across masked/unmasked deps, changed lockfile, GPU, and timezone; asserts generation-aware names, no auth/history mount, no agent-home token, and visible CodeGraph degradation.
+- [ ] Parse changed `.ps1` product files with Windows PowerShell 5.1 when that environment is available; zero syntax errors.
+- [ ] Exercise synthetic staging fixtures for cold/warm/change/delete/missing/failure/exclusion/credential/LF/collision/reparse/containment cases; every invalid path asserts zero mutation.
+- [ ] Exercise build overrides, partial overrides, `-SkipPrepare`, no-cache, and output modes; no empty flags or source path reaches engine argv.
+- [ ] Exercise Docker/Podman argv across masked/unmasked deps, changed lockfile, GPU, and timezone; assert generation-aware names, no auth/history mount, no agent-home token, and visible CodeGraph degradation.
 - [ ] Scoped product search: no `/home/agent`, `agent:agent`, sudoers, root package-script execution, launcher `sudo|chown`, generic volume names, or Podman support claim.
-- [ ] Build canonical Dockerfile with explicit test tag on named Docker Desktop/Windows runner; receipt records clean source/tree SHA, resolved base/package versions, staging/package-inventory hash, exact harness commands/hashes, image digest, and engine/platform versions.
-- [ ] Immutable image harness: UID 0, `/root`, `/workspace`, Codex/Node/npm/CodeGraph/agent-browser/Playwright versions, offline browser, rm-guard evidence, `.codex` payload, repo skill, shared sentinel, critical hashes, and absent hostile lifecycle marker.
+- [ ] Build the canonical Dockerfile with an explicit test tag on Docker Desktop/Windows when available; check UID 0, `/root`, `/workspace`, expected tool/browser availability, `.codex` payload, repo skill, shared-skills root, critical files, and absent hostile lifecycle marker.
 - [ ] Prepared `config.toml` contains only `/root/.codex` image-local marketplace sources and expected kept/dropped sections.
 
 ### Manual Verification
@@ -375,18 +351,17 @@ $nmInstall = "if [ -z ... ]; then ...; fi;"
 - [ ] Confirm shared sentinel is discoverable only in no-collision fixture; duplicate skill fixture fails staging rather than relying on precedence.
 - [ ] Create, edit, delete, then host-verify workspace file and owner/mode; restart confirms workspace persistence while Codex auth/history remain ephemeral.
 - [ ] Run masked `node_modules` with one lockfile twice, then changed lockfile: first initializes matching `codex-nmvol-*`; second reuses it; changed lock creates a new generation; host Windows tree remains unchanged.
-- [ ] Confirm no real credential/session content is read or captured. Receipt retains only synthetic manifest hashes and redacted manual attestation.
+- [ ] Confirm no real credential/session content is read or captured; use only synthetic manifests and redacted manual attestation.
 
 ### Acceptance Criteria Validation
 
 | Criterion | How to Verify | Expected Result |
 | --- | --- | --- |
-| Root runtime + plugin authority | immutable image harness + hostile lifecycle fixture | UID 0 final runtime; no host-derived lifecycle script runs as root; critical hashes match receipt |
+| Root runtime + plugin authority | image check + hostile lifecycle fixture | UID 0 final runtime; no host-derived lifecycle script runs as root; critical hashes match expected values |
 | Existing Codex config preserved | pre/post synthetic normalized manifests + TOML semantic assertions | only expected root path and shared-skills output differ |
-| Shared skills safely staged | robocopy/collision/reparse harness + sentinel discovery | no reparse/overlap escape; duplicate fails; stale/credential/SCM/native-dep sentinels absent |
-| Build interface complete | committed fake prepare/engine harness | all four source/destination overrides forwarded exactly; defaults unchanged |
+| Shared skills safely staged | synthetic robocopy/collision/reparse checks + sentinel discovery | no reparse/overlap escape; duplicate fails; stale/credential/SCM/native-dep sentinels absent |
+| Build interface complete | mocked prepare/engine checks | all four source/destination overrides forwarded exactly; defaults unchanged |
 | Docker release contract | supported-row live workspace/volume matrix | create/edit/delete + host owner/mode pass; unsupported Podman absent from docs |
-| Evidence durable | receipt validation + independent rerun | clean source, inputs, commands, platform, digest, attestation, and expiry bound in one receipt |
 | Docs truthful | path/default/command/support cross-check | README matches implementation; states payload trust and Docker-only release support |
 
 ---
@@ -395,12 +370,12 @@ $nmInstall = "if [ -z ... ]; then ...; fi;"
 
 Per-step rollback is specified above. Full abandonment:
 
-1. Revert only the eleven scoped suite files from the modernization commits (including new harnesses, receipt template, and `codex/.gitignore`).
-2. Rebuild the prior explicit `codex-custom:v1` tag; verify it returns to UID-1000 `/home/agent` behavior and prior prepare fixture manifest.
+1. Revert only the six scoped suite files from the modernization commits (including `codex/.gitignore`).
+2. Rebuild the prior explicit `codex-custom:v1` tag; verify it returns to UID-1000 `/home/agent` behavior and prior prepared synthetic manifest.
 3. Leave generated operator context, old/new named volumes, images, and credentials untouched unless the operator explicitly authorizes exact cleanup targets.
 4. If a migration-built tag exists, remove/retag only that recorded image ID after confirming no active container uses it.
 5. Record why root or shared-skills parity failed before any narrower retry.
-6. On suspected payload/image compromise: stop downstream consumption; preserve digest, receipt, and sanitized inventory; quarantine tag/volumes only with explicit operator authorization; have the credential owner assess/revoke the affected device-auth session; assess workspace ownership/damage before reusing the image.
+6. On suspected payload/image compromise: stop downstream consumption; preserve the image digest and sanitized inventory; quarantine tag/volumes only with explicit operator authorization; have the credential owner assess/revoke the affected device-auth session; assess workspace ownership/damage before reusing the image.
 
 ---
 
@@ -408,12 +383,13 @@ Per-step rollback is specified above. Full abandonment:
 
 - **2026-08-10:** Rebased Codex staging transport on Pi's latest file-or-directory `robocopy` behavior; added file-branch `AGENTS.md` staging and sibling/placeholder-leak acceptance cases while retaining Codex transforms and containment — trigger: human requirement, “Use the latest robocopy code from pi suite which covers file-level copy”; source verified at `pi/prepare.ps1:51-115` in `9d3e6b5`.
 - **2026-08-10:** Blocked Plan; added unprivileged plugin dependency phase, destination/reparse containment, fail-closed skill collisions, Docker-only release matrix, generation-aware caches, committed harness/receipt scope, and compromise response — trigger: 2608101607-codex-suite-modernization-plan-redteam.md § Critical Findings/Remediation/Final Assessment and 2608101613-codex-suite-modernization-plan-stress.md § Findings/Remediation/Final Assessment; re-verified current root package install at `codex/Dockerfile:110-113`, caller-selected staging roots in `codex/prepare.ps1:7-20`, and absent local Docker/Podman/PowerShell/robocopy.
+- **2026-08-10:** Waived Step 0; marked its resource/harness/receipt gate superseded, removed its five artifact files and durable-evidence acceptance requirement, updated affected scope, dependencies, verification, rollback, and status to `Ready` — trigger: human directive, “what are these enterprise bs? Waive step0”.
 
 ## Notes
 
 ### Split Verdict
 
-`No split — eleven tightly coupled suite/test/evidence files, six steps, within size budget. Downstream c_c/root artifacts are read-only relationships, not implementation targets.`
+`No split — six tightly coupled suite files, five implementation steps, within size budget. Downstream c_c/root artifacts are read-only relationships, not implementation targets.`
 
 ### Risks
 
