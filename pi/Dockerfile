@@ -120,6 +120,7 @@ RUN set -eux; \
     /usr/bin/rm.real -rf /workspace
 
 COPY context/.pi/ /root/.pi/
+COPY context/.pi-lens/ /root/.pi-lens/
 
 # Cross-agent skills standard: pi auto-loads ~/.agents/skills (global, always
 # trusted — unlike project-local .agents/skills, which is trust-gated). Staged

@@ -51,8 +51,38 @@ $rcExcludeFiles = @('/XF', '.keep', '*.exe', '*.dll') + $credentialExcludePatter
 function Invoke-RobocopyStage([string]$src, [string]$dst, [string]$label) {
     if (Test-Path $src) {
         $item = Get-Item $src
+        
+        if (-not $item.PSIsContainer) {
+$ErrorActionPreference = 'Inquire'
+            $srcParent = Split-Path -Path $src -Parent -Resolve
 
-        if ($item.PSIsContainer) {
+            $fn = Split-Path -Path $src -Leaf -Resolve
+        
+            $dstParent = Split-Path -Path $dst -Parent
+	       
+            $rcFlags2 = @('/MT:4', '/R:1', '/W:1', '/NFL', '/NDL', '/NP', '/NJH', '/NJS')
+            
+            robocopy $srcParent $dstParent $fn @rcFlags2 | Out-Null
+            $rc = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+
+            if ($rc -ge 8) {
+                throw "robocopy failed staging ${label}: exit $rc"
+            }
+
+            $verdict = switch ($rc) {
+                0       { 'unchanged' }
+                1       { 'updated' }
+                2       { 'stale entries purged' }
+                3       { 'updated + purged' }
+                default { "exit $rc" }
+            }
+
+            Write-Host "[prepare] $label -> $verdict"
+
+		 return # We don't want to add .keep here
+        }
+        else {
             # Directory source
             robocopy $src $dst @rcFlags @rcExcludeDirs @rcExcludeFiles | Out-Null
             $rc = $LASTEXITCODE
@@ -70,16 +100,7 @@ function Invoke-RobocopyStage([string]$src, [string]$dst, [string]$label) {
                 default { "exit $rc" }
             }
 
-            Write-Host "[prepare] $label -> $verdict"
-        }
-        else {
-            # Single-file source
-            New-Item -ItemType Directory -Path $dst -Force | Out-Null
-
-            $target = Join-Path $dst $item.Name
-            Copy-Item -Path $src -Destination $target -Force
-
-            Write-Host "[prepare] $label -> updated"
+            Write-Host "[prepare] $label($src) -> $verdict"
         }
     }
     else {
@@ -92,8 +113,7 @@ function Invoke-RobocopyStage([string]$src, [string]$dst, [string]$label) {
 }
 Invoke-RobocopyStage $HostPiDir           $Destination       '~/.pi'
 Invoke-RobocopyStage $HostAgentsSkillsDir $SkillsDestination '~/.agents/skills'
-Invoke-RobocopyStage '$env:USERPROFILE\.pi-lens\config.json' (Join-Path $PSScriptRoot 'context\.pi-lens\config.json') '~/.pi-lens'
-
+Invoke-RobocopyStage "$env:USERPROFILE\.pi-lens\config.json" (Join-Path $PSScriptRoot 'context\.pi-lens\config.json') '~/.pi-lens/config.json'
 
 $stagedRoots = @($Destination, $SkillsDestination)
 
