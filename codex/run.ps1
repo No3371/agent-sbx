@@ -90,28 +90,27 @@ try {
 } catch { }
 if (-not $tz) { Write-Warning "[run] could not map host timezone to an IANA name; container clock defaults to UTC" }
 
-# If the host has Windows node_modules, mask it with a per-project named volume
-# because native binaries cannot run in Linux. Chown a fresh volume and install
-# Linux dependencies when empty. pnpm is not baked into this image, so its
-# projects fail with an explicit error.
+# Mask incompatible host node_modules with a generation-specific Codex volume.
+# The image runs as root, so no ownership repair or user namespace remap applies.
 $maskNodeModules = Test-Path (Join-Path $Workspace 'node_modules')
 $nmInstall = ""
 if ($maskNodeModules) {
-    $sha   = [System.Security.Cryptography.SHA256]::Create()
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant())
-    $hash  = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-','').Substring(0,12).ToLower()
-    $nmVol = "nmvol-$hash"
-    $nmInstall = "sudo chown agent:agent /workspace/node_modules; if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then corepack pnpm install || pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi; "
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $workspaceBytes = [System.Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant())
+    $workspaceHash = ([BitConverter]::ToString($sha.ComputeHash($workspaceBytes)) -replace '-','').Substring(0,12).ToLower()
+    $lockFile = @('package-lock.json', 'yarn.lock', 'pnpm-lock.yaml') | ForEach-Object { $candidate = Join-Path $Workspace $_; if (Test-Path -LiteralPath $candidate) { $candidate; break } }
+    $lockHash = if ($lockFile) { (Get-FileHash -Algorithm SHA256 -LiteralPath $lockFile).Hash.Substring(0,12).ToLower() } else { 'nolock' }
+    $nmVol = "codex-nmvol-$workspaceHash-$lockHash"
+    $nmInstall = "if [ -z `"`$(ls -A /workspace/node_modules 2>/dev/null)`" ]; then echo '[run] node_modules masked + empty -> installing Linux-native deps'; if [ -f pnpm-lock.yaml ]; then corepack pnpm install || pnpm install; elif [ -f yarn.lock ]; then yarn install; else npm install; fi; fi; "
 }
 
 $runArgs = @(
     'run', '-it', '--rm',
     '-v', ("{0}:/workspace" -f $Workspace),
     '-w', '/workspace',
-    '-v', 'pm-cache:/home/agent/.npm'
+    '-v', 'codex-pm-cache-node25:/root/.npm'
 )
 if ($maskNodeModules) { $runArgs += @('-v', "${nmVol}:/workspace/node_modules") }
-if ($Engine -eq 'podman') { $runArgs += '--userns=keep-id' }
 if ($tz) { $runArgs += @('-e', "TZ=$tz") }
 if ($GPU) { $runArgs += @('--gpus', 'all') }
 
@@ -124,8 +123,8 @@ if ($GPU) { $runArgs += @('--gpus', 'all') }
 # which starts a callback server on localhost:1455 inside the container that
 # the host browser can't reach without publishing that port.
 $bootstrap = $nmInstall +
-             "codegraph install --yes --target=codex --location=global; " +
-             "test -d .codegraph || codegraph init; " +
+             "if ! codegraph install --yes --target=codex --location=global; then echo '[run] CodeGraph install failed; continuing without integration'; fi; " +
+             "if [ ! -d .codegraph ] && ! codegraph init; then echo '[run] CodeGraph init failed; continuing without graph'; fi; " +
              "codex login --device-auth; exec codex --dangerously-bypass-approvals-and-sandbox"
 $runArgs += @($Image, 'sh', '-lc', $bootstrap)
 

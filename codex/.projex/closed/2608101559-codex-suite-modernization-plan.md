@@ -1,9 +1,12 @@
 # Modernize Codex sandbox suite
 
-> **Status:** In Progress
+> **Status:** Complete
+> **Completed:** 2026-08-10
+> **Walkthrough:** 2608101729-codex-suite-modernization-walkthrough.md
+> **Log:** 2608101559-codex-suite-modernization-log.md
 > **Author:** openai-codex/gpt-5.6-sol (plan-projex)
 > **Source:** Direct request — modernize Codex suite to parity with updated suites, including root runtime and robocopy staging
-> **Related Projex:** 2608030651-codex-incremental-context-staging-patch.md (robocopy baseline) | 2608030706-coding-agent-sandbox-suite-contract-def.md (shared contract; observed state predates recent Pi/OpenCode updates) | 2608030408-c-c-combined-suite-plan.md (downstream; must rebase Codex assumptions) | 2608030409-retire-merged-codex-suite-plan.md (downstream retirement, dependency-gated) | 2608101607-codex-suite-modernization-plan-redteam.md (revision trigger) | 2608101613-codex-suite-modernization-plan-stress.md (revision trigger)
+> **Related Projex:** 2608030651-codex-incremental-context-staging-patch.md (robocopy baseline) | 2608030706-coding-agent-sandbox-suite-contract-def.md (shared contract; observed state predates recent Pi/OpenCode updates) | 2608030408-c-c-combined-suite-plan.md (downstream; must rebase Codex assumptions) | 2608030409-retire-merged-codex-suite-plan.md (downstream retirement, dependency-gated) | 2608101607-codex-suite-modernization-plan-redteam.md (revision trigger) | 2608101613-codex-suite-modernization-plan-stress.md (revision trigger) | 2608101720-codex-suite-modernization-execution-audit.md (execution remediation trigger) | 2608101725-codex-staging-envelope-safety-patch.md (post-audit safety remediation)
 > **Worktree:** Yes
 
 ---
@@ -384,6 +387,7 @@ Per-step rollback is specified above. Full abandonment:
 - **2026-08-10:** Rebased Codex staging transport on Pi's latest file-or-directory `robocopy` behavior; added file-branch `AGENTS.md` staging and sibling/placeholder-leak acceptance cases while retaining Codex transforms and containment — trigger: human requirement, “Use the latest robocopy code from pi suite which covers file-level copy”; source verified at `pi/prepare.ps1:51-115` in `9d3e6b5`.
 - **2026-08-10:** Blocked Plan; added unprivileged plugin dependency phase, destination/reparse containment, fail-closed skill collisions, Docker-only release matrix, generation-aware caches, committed harness/receipt scope, and compromise response — trigger: 2608101607-codex-suite-modernization-plan-redteam.md § Critical Findings/Remediation/Final Assessment and 2608101613-codex-suite-modernization-plan-stress.md § Findings/Remediation/Final Assessment; re-verified current root package install at `codex/Dockerfile:110-113`, caller-selected staging roots in `codex/prepare.ps1:7-20`, and absent local Docker/Podman/PowerShell/robocopy.
 - **2026-08-10:** Waived Step 0; marked its resource/harness/receipt gate superseded, removed its five artifact files and durable-evidence acceptance requirement, updated affected scope, dependencies, verification, rollback, and status to `Ready` — trigger: human directive, “what are these enterprise bs? Waive step0”.
+- **2026-08-10:** Post-audit patch bound the staging marker to the canonical generated envelope, rejected pre-existing unmarked targets before any mutation, removed Podman run guidance from build output, and added an unmarked-envelope regression fixture — trigger: 2608101720-codex-suite-modernization-execution-audit.md § Code/Implementation Inspection/Findings; evidence: 2608101725-codex-staging-envelope-safety-patch.md.
 
 ## Notes
 

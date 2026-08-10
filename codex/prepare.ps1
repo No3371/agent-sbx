@@ -1,357 +1,270 @@
-# Stage host Codex configuration, instructions, skills, and plugin bundles into
-# ./context/.codex. Credentials, sessions, caches, sandbox state, and machine-
-# local state stay on the host. Remove Windows and local trust/marketplace TOML
-# sections, dangling plugins, and rewrite Windows MCP command paths.
+# Stage filtered Codex inputs plus optional shared agent skills. Inputs are trusted
+# local build payloads, not content-certified by the filename exclusions below.
 
 [CmdletBinding()]
 param(
     [string]$HostCodexDir = "$env:USERPROFILE\.codex",
-    [string]$Destination  = (Join-Path $PSScriptRoot 'context\.codex')
+    [string]$HostAgentsSkillsDir = "$env:USERPROFILE\.agents\skills",
+    [string]$Destination = (Join-Path $PSScriptRoot 'context\.codex'),
+    [string]$SkillsDestination = (Join-Path $PSScriptRoot 'context\.agents\skills')
 )
 
 $ErrorActionPreference = 'Stop'
-
-if (-not (Test-Path $HostCodexDir)) {
-    throw "Host .codex dir not found: $HostCodexDir"
-}
-
-# Keep the root stable; staged trees below mirror independently so unchanged
-# payloads are not deleted and recopied on every run.
-New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-
-# BOMless UTF-8 writer — TOML & Markdown both expected without BOM by their
-# typical parsers. PS 5.1 Set-Content -Encoding UTF8 emits BOM; use .NET API
-# directly for consistent behavior across PS versions.
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
-function Write-TextNoBom([string]$path, [string]$content) {
-    [System.IO.File]::WriteAllText($path, $content, $Utf8NoBom)
-}
-function Write-LinesNoBom([string]$path, [string[]]$lines) {
-    [System.IO.File]::WriteAllLines($path, $lines, $Utf8NoBom)
-}
-
-# Filename patterns that must never be baked into the image, regardless of
-# directory. Handed to robocopy /XF below, which matches them at every depth.
-$credentialExcludePatterns = @(
-    'auth.json', 'token.json', 'secrets.json',
-    '*.key', '*.pem', '*.token', '*.credentials',
-    '*.p12', '*.pfx'
-)
+$credentialExcludePatterns = @('auth.json', 'token.json', 'secrets.json', '*.key', '*.pem', '*.token', '*.credentials', '*.p12', '*.pfx')
 $excludedDirectoryNames = @('.github', '.git', 'node_modules')
+$rcMirrorFlags = @('/MIR', '/MT:16', '/R:1', '/W:1', '/NFL', '/NDL', '/NP', '/NJH', '/NJS')
+$markerName = '.codex-stage-marker'
 
-# robocopy /MIR stages incrementally and purges removed source entries.
-# Exit codes below 8 are success; 8 and above are failures.
-if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) {
-    throw "robocopy not found on PATH — required for staging."
+function Write-TextNoBom([string]$Path, [string]$Content) {
+    [System.IO.File]::WriteAllText($Path, $Content, $Utf8NoBom)
 }
-# PS 7.3+ can promote a nonzero native exit code to a terminating error under
-# $ErrorActionPreference='Stop'. Robocopy's success codes are often nonzero.
-if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
-    $PSNativeCommandUseErrorActionPreference = $false
+function Write-LinesNoBom([string]$Path, [string[]]$Lines) {
+    [System.IO.File]::WriteAllLines($Path, $Lines, $Utf8NoBom)
 }
-
-$rcFlags = @('/MIR', '/MT:16', '/R:1', '/W:1', '/NFL', '/NDL', '/NP', '/NJH', '/NJS')
-
-function Sync-StageTree(
-    [string]$label,
-    [string]$source,
-    [string]$destination,
-    [string[]]$additionalExcludedDirectories = @()
-) {
-    $rcExcludeDirs = @('/XD') + $excludedDirectoryNames + $additionalExcludedDirectories
-    # .keep exists only in the destination. /XF also shields it from /MIR purge.
-    $rcExcludeFiles = @('/XF', '.keep') + $credentialExcludePatterns
-
-    if (Test-Path $source) {
-        robocopy $source $destination @rcFlags @rcExcludeDirs @rcExcludeFiles | Out-Null
-        $rc = $LASTEXITCODE
-        $global:LASTEXITCODE = 0
-        if ($rc -ge 8) { throw "robocopy failed staging ${label}: exit $rc" }
-        $verdict = switch ($rc) {
-            0       { 'unchanged' }
-            1       { 'updated' }
-            2       { 'stale entries purged' }
-            3       { 'updated + purged' }
-            default { "exit $rc" }
-        }
-        Write-Host "[prepare] $label -> $verdict"
-    } else {
-        # Match the old clean rebuild when an optional host tree disappears.
-        if (Test-Path $destination) { Remove-Item $destination -Recurse -Force }
-        Write-Host "[prepare] no $label dir on host"
+function Get-CanonicalPath([string]$Path) {
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+}
+function Test-PathInside([string]$Child, [string]$Parent) {
+    $c = (Get-CanonicalPath $Child).ToLowerInvariant()
+    $p = (Get-CanonicalPath $Parent).ToLowerInvariant()
+    return $c -eq $p -or $c.StartsWith($p + [IO.Path]::DirectorySeparatorChar)
+}
+function Assert-NotFilesystemRoot([string]$Path, [string]$Label) {
+    $full = Get-CanonicalPath $Path
+    if ($full -eq [IO.Path]::GetPathRoot($full).TrimEnd('\', '/')) { throw "$Label must not be a filesystem root." }
+}
+function Assert-NoReparseTraversal([string]$Path, [string]$Label, [switch]$AllowMissing) {
+    $full = Get-CanonicalPath $Path
+    $cursor = $full
+    while (-not (Test-Path -LiteralPath $cursor)) {
+        $parent = Split-Path -Parent $cursor
+        if ($parent -eq $cursor -or [string]::IsNullOrEmpty($parent)) { break }
+        $cursor = $parent
     }
+    if (-not (Test-Path -LiteralPath $cursor)) {
+        if ($AllowMissing) { return }
+        throw "$Label does not exist."
+    }
+    while ($true) {
+        $item = Get-Item -LiteralPath $cursor -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "$Label traverses a reparse point." }
+        $parent = Split-Path -Parent $cursor
+        if ($parent -eq $cursor -or [string]::IsNullOrEmpty($parent)) { break }
+        $cursor = $parent
+    }
+    if (Test-Path -LiteralPath $full) {
+        $reparse = Get-ChildItem -LiteralPath $full -Recurse -Force -ErrorAction Stop | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 }
+        if ($reparse) { throw "$Label contains a reparse point." }
+    }
+}
+function Assert-SkillShape([string]$Root, [string]$Label, [switch]$Optional) {
+    if (-not (Test-Path -LiteralPath $Root)) {
+        if ($Optional) { return }
+        throw "$Label missing."
+    }
+    foreach ($dir in Get-ChildItem -LiteralPath $Root -Directory -Force) {
+        if ($dir.Name -eq '.system' -and $Label -eq 'Codex skills') { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path $dir.FullName 'SKILL.md') -PathType Leaf)) {
+            throw "$Label contains malformed skill '$($dir.Name)'."
+        }
+    }
+    $nestedSystem = Get-ChildItem -LiteralPath $Root -Directory -Recurse -Force | Where-Object { $_.Name -eq '.system' -and $_.FullName -ne (Join-Path $Root '.system') }
+    if ($nestedSystem) { throw "$Label contains nested .system directory." }
+}
+function Assert-StageLayout {
+    if (-not (Test-Path -LiteralPath $HostCodexDir -PathType Container)) { throw 'Host .codex dir not found.' }
+    $configSrc = Join-Path $HostCodexDir 'config.toml'
+    if (-not (Test-Path -LiteralPath $configSrc -PathType Leaf)) { throw 'host config.toml missing.' }
 
-    New-Item -ItemType Directory -Path $destination -Force | Out-Null
-    Set-Content -Path (Join-Path $destination '.keep') -Value '' -Encoding UTF8
+    $envelope = Split-Path -Parent (Get-CanonicalPath $Destination)
+    $expectedCodex = Join-Path $envelope '.codex'
+    $expectedSkills = Join-Path (Join-Path $envelope '.agents') 'skills'
+    if ((Get-CanonicalPath $Destination) -ne (Get-CanonicalPath $expectedCodex) -or (Get-CanonicalPath $SkillsDestination) -ne (Get-CanonicalPath $expectedSkills)) {
+        throw 'Destinations must be <generated-envelope>/.codex and <generated-envelope>/.agents/skills.'
+    }
+    foreach ($pair in @(@($HostCodexDir, 'Host .codex'), @($HostAgentsSkillsDir, 'Host shared skills'), @($Destination, 'Codex destination'), @($SkillsDestination, 'Shared-skills destination'), @($envelope, 'Generated envelope'))) {
+        Assert-NotFilesystemRoot $pair[0] $pair[1]
+    }
+    Assert-NoReparseTraversal $HostCodexDir 'Host .codex'
+    Assert-NoReparseTraversal $HostAgentsSkillsDir 'Host shared skills' -AllowMissing
+    Assert-NoReparseTraversal $Destination 'Codex destination' -AllowMissing
+    Assert-NoReparseTraversal $SkillsDestination 'Shared-skills destination' -AllowMissing
+    if ((Test-PathInside $Destination $HostCodexDir) -or (Test-PathInside $SkillsDestination $HostCodexDir) -or ((Test-Path $HostAgentsSkillsDir) -and ((Test-PathInside $Destination $HostAgentsSkillsDir) -or (Test-PathInside $SkillsDestination $HostAgentsSkillsDir)))) { throw 'Destination must not be inside a source tree.' }
+    if ((Test-PathInside $HostCodexDir $Destination) -or ((Test-Path $HostAgentsSkillsDir) -and (Test-PathInside $HostAgentsSkillsDir $SkillsDestination))) { throw 'Source must not be inside its destination.' }
+    if ((Test-PathInside $Destination $SkillsDestination) -or (Test-PathInside $SkillsDestination $Destination)) { throw 'Staging destinations overlap.' }
+    Assert-SkillShape (Join-Path $HostCodexDir 'skills') 'Codex skills' -Optional
+    Assert-SkillShape $HostAgentsSkillsDir 'Shared skills' -Optional
+    return $envelope
+}
+function Get-MarkerContent([string]$Envelope) {
+    return "codex/prepare.ps1 generated envelope: $(Get-CanonicalPath $Envelope)`n"
+}
+function Assert-Marker([string]$Envelope) {
+    $marker = Join-Path $Envelope $markerName
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf) -or [IO.File]::ReadAllText($marker) -cne (Get-MarkerContent $Envelope)) {
+        throw 'Generated-root marker is missing or invalid; refusing destination mutation.'
+    }
+}
+function Initialize-TrustedEnvelope([string]$Envelope) {
+    if (Test-Path -LiteralPath $Envelope) {
+        if (-not (Test-Path -LiteralPath $Envelope -PathType Container)) { throw 'Generated envelope must be a directory.' }
+        Assert-Marker $Envelope
+        return
+    }
+    New-Item -ItemType Directory -Path $Envelope -Force | Out-Null
+    Write-TextNoBom (Join-Path $Envelope $markerName) (Get-MarkerContent $Envelope)
+}
+function Assert-Contained([string]$Path, [string]$Root) {
+    if (-not (Test-PathInside $Path $Root)) { throw 'Path escapes generated context envelope.' }
+}
+function Invoke-RobocopyStage([string]$Label, [string]$Source, [string]$Target, [string[]]$ExcludedDirs = @(), [switch]$OptionalDirectory) {
+    Assert-Marker $envelope
+    Assert-Contained $Target $envelope
+    $sourceItem = if (Test-Path -LiteralPath $Source) { Get-Item -LiteralPath $Source -Force } else { $null }
+    if (-not $sourceItem) {
+        if (-not $OptionalDirectory) { return $false }
+        if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Recurse -Force }
+        New-Item -ItemType Directory -Path $Target -Force | Out-Null
+        Write-TextNoBom (Join-Path $Target '.keep') ''
+        Write-Host "[prepare] $Label absent; wrote placeholder"
+        return $false
+    }
+    $excludeFiles = @('/XF', '.keep') + $credentialExcludePatterns
+    if ($sourceItem.PSIsContainer) {
+        New-Item -ItemType Directory -Path $Target -Force | Out-Null
+        robocopy $sourceItem.FullName $Target @rcMirrorFlags @('/XD') $excludedDirectoryNames $ExcludedDirs @excludeFiles | Out-Null
+        $rc = $LASTEXITCODE; $global:LASTEXITCODE = 0
+        if ($rc -ge 8) { throw "robocopy failed staging $Label: exit $rc" }
+        Write-TextNoBom (Join-Path $Target '.keep') ''
+        Write-Host "[prepare] $Label -> robocopy exit $rc"
+        return $true
+    }
+    $sourceParent = Split-Path -Parent $sourceItem.FullName
+    $targetParent = Split-Path -Parent $Target
+    New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+    robocopy $sourceParent $targetParent $sourceItem.Name '/R:1' '/W:1' '/NFL' '/NDL' '/NP' '/NJH' '/NJS' | Out-Null
+    $rc = $LASTEXITCODE; $global:LASTEXITCODE = 0
+    if ($rc -ge 8) { throw "robocopy failed staging $Label: exit $rc" }
+    Write-Host "[prepare] $Label -> robocopy file exit $rc"
+    return $true
+}
+function Remove-StaleExcluded([string]$Root) {
+    Assert-Marker $envelope
+    foreach ($dir in Get-ChildItem -LiteralPath $Root -Directory -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $excludedDirectoryNames -contains $_.Name }) {
+        Assert-Contained $dir.FullName $envelope
+        Remove-Item -LiteralPath $dir.FullName -Recurse -Force
+        Write-Host "[prepare] removed excluded directory: $($dir.FullName.Substring($envelope.Length).TrimStart('\','/'))"
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $Root -File -Recurse -Force -ErrorAction SilentlyContinue) {
+        if ($credentialExcludePatterns | Where-Object { $file.Name -like $_ }) {
+            Assert-Contained $file.FullName $envelope
+            Remove-Item -LiteralPath $file.FullName -Force
+            Write-Host "[prepare] removed credential-pattern file: $($file.FullName.Substring($envelope.Length).TrimStart('\','/'))"
+        }
+    }
+}
+function Normalize-ShellFiles([string]$Root) {
+    foreach ($file in Get-ChildItem -LiteralPath $Root -File -Recurse -Force -Filter '*.sh' -ErrorAction SilentlyContinue) {
+        $text = [IO.File]::ReadAllText($file.FullName)
+        if ($text.Contains("`r`n")) { Write-TextNoBom $file.FullName ($text -replace "`r`n", "`n") }
+    }
+}
+function Assert-NoSkillCollisions([string[]]$Roots) {
+    $names = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($root in $Roots) {
+        foreach ($dir in Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue) {
+            if ($dir.Name -eq '.system') { continue }
+            if (-not (Test-Path -LiteralPath (Join-Path $dir.FullName 'SKILL.md') -PathType Leaf)) { throw "Staged malformed skill '$($dir.Name)'." }
+            if (-not $names.Add($dir.Name)) { throw "Duplicate canonical skill name '$($dir.Name)'." }
+        }
+    }
+}
+function Write-Inventory([string[]]$Roots) {
+    $items = New-Object System.Collections.Generic.List[object]
+    foreach ($root in $Roots) {
+        $rootName = if ((Get-CanonicalPath $root) -eq (Get-CanonicalPath $Destination)) { '.codex' } else { '.agents/skills' }
+        foreach ($file in Get-ChildItem -LiteralPath $root -File -Recurse -Force -ErrorAction SilentlyContinue | Sort-Object FullName) {
+            if ($file.Name -eq '.keep') { continue }
+            $package = $null; $version = $null; $lifecycle = @()
+            if ($file.Name -eq 'package.json') {
+                try {
+                    $parsed = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+                    $package = $parsed.name; $version = $parsed.version
+                    if ($parsed.scripts) { $lifecycle = @($parsed.scripts.PSObject.Properties | Where-Object { $_.Name -in @('preinstall','install','postinstall','prepublish','preprepare','prepare','postprepare') } | ForEach-Object { $_.Name }) }
+                } catch { throw "Invalid package.json at staged relative path '$($file.FullName.Substring($root.Length).TrimStart('\','/'))'." }
+            }
+            $items.Add([ordered]@{ root = $rootName; path = $file.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/'); sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash; package = $package; version = $version; lifecycleScripts = $lifecycle }) | Out-Null
+        }
+    }
+    $inventory = [ordered]@{ format = 1; files = $items }
+    Write-TextNoBom (Join-Path $Destination 'staged-input-inventory.json') ($inventory | ConvertTo-Json -Depth 6)
 }
 
-# --- skills/: stage with .system/ excluded, seed .keep placeholder ---
+if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) { throw 'robocopy not found on PATH — required for staging.' }
+if (Test-Path variable:PSNativeCommandUseErrorActionPreference) { $PSNativeCommandUseErrorActionPreference = $false }
+$envelope = Assert-StageLayout
+Initialize-TrustedEnvelope $envelope
+
 $skillsSrc = Join-Path $HostCodexDir 'skills'
 $skillsDst = Join-Path $Destination 'skills'
-$skillsSystemDst = Join-Path $skillsDst '.system'
-if (Test-Path $skillsSystemDst) { Remove-Item $skillsSystemDst -Recurse -Force }
-Sync-StageTree 'skills' $skillsSrc $skillsDst @((Join-Path $skillsSrc '.system'))
-
-# --- vendor_imports/skills/: staged with recursive excludes ---
 $vendorSrc = Join-Path $HostCodexDir 'vendor_imports\skills'
 $vendorDst = Join-Path $Destination 'vendor_imports\skills'
-Sync-StageTree 'vendor_imports/skills' $vendorSrc $vendorDst
+$pluginsSrc = Join-Path $HostCodexDir 'plugins\cache'
+$pluginsDst = Join-Path $Destination 'plugins\cache'
+Invoke-RobocopyStage 'skills' $skillsSrc $skillsDst @((Join-Path $skillsSrc '.system')) -OptionalDirectory | Out-Null
+Invoke-RobocopyStage 'vendor_imports/skills' $vendorSrc $vendorDst -OptionalDirectory | Out-Null
+Invoke-RobocopyStage 'plugins/cache' $pluginsSrc $pluginsDst -OptionalDirectory | Out-Null
+Invoke-RobocopyStage 'shared skills' $HostAgentsSkillsDir $SkillsDestination -OptionalDirectory | Out-Null
+Remove-StaleExcluded $Destination
+Remove-StaleExcluded $SkillsDestination
+Normalize-ShellFiles $Destination
+Normalize-ShellFiles $SkillsDestination
+Assert-NoSkillCollisions @($skillsDst, $vendorDst, $SkillsDestination)
 
-# --- plugins/cache/: installed plugin bundles (context-mode, ponytail, bundled
-# browser/chrome, etc.). Only cache/ is staged — plugins/data/,
-# .plugin-appserver/, .marketplace-plugin-source-staging/, and
-# .remote-plugin-install-staging/ remain host-only runtime/staging state.
-$pluginsCacheSrc = Join-Path $HostCodexDir 'plugins\cache'
-$pluginsCacheDst = Join-Path $Destination 'plugins\cache'
-Sync-StageTree 'plugins/cache' $pluginsCacheSrc $pluginsCacheDst
-
-# /XF prevents credentials entering from the source but also shields matching
-# destination files from /MIR purge. Remove anything left by an older prepare
-# revision before later processing can fail, while retaining the old warning.
-$leaked = Get-ChildItem -Path $Destination -Recurse -Force -ErrorAction SilentlyContinue |
-    Where-Object { -not $_.PSIsContainer } |
-    Where-Object {
-        $n = $_.Name
-        $matched = $false
-        foreach ($pat in $credentialExcludePatterns) {
-            if ($n -like $pat) { $matched = $true; break }
-        }
-        $matched
-    }
-if ($leaked) {
-    foreach ($f in $leaked) {
-        Write-Warning "[prepare] CREDENTIAL RISK: removing $($f.FullName) from staged context"
-        Remove-Item $f.FullName -Force
-    }
-}
-
-# Host .sh files may carry CRLF line endings (authored on Windows) — bash
-# rejects a `\r` in the shebang line outright. Normalize before baking.
-$shFiles = Get-ChildItem -Path $Destination -Recurse -Force -Filter '*.sh' -ErrorAction SilentlyContinue
-foreach ($f in $shFiles) {
-    $content = [System.IO.File]::ReadAllText($f.FullName)
-    if ($content.Contains("`r`n")) {
-        Write-TextNoBom $f.FullName ($content -replace "`r`n", "`n")
-        Write-Host "[prepare] normalized CRLF -> LF: $($f.FullName.Substring($Destination.Length))"
-    }
-}
-
-# --- AGENTS.md: stage as-is, or create empty stub if absent ---
-$agentsSrc = Join-Path $HostCodexDir 'AGENTS.md'
 $agentsDst = Join-Path $Destination 'AGENTS.md'
-if (Test-Path $agentsSrc) {
-    Copy-Item -Path $agentsSrc -Destination $agentsDst -Force
-    Write-Host "[prepare] staged AGENTS.md"
-} else {
-    Write-TextNoBom $agentsDst ''
-    Write-Host "[prepare] AGENTS.md not on host — wrote empty stub"
-}
+if (-not (Invoke-RobocopyStage 'AGENTS.md' (Join-Path $HostCodexDir 'AGENTS.md') $agentsDst)) { Write-TextNoBom $agentsDst '' }
 
-# --- config.toml: rewrite per drop/keep rules above ---
+function Rewrite-TomlLine([string]$Line, [string]$CurrentSection) {
+    if ([string]::IsNullOrEmpty($Line) -or -not $CurrentSection.StartsWith('mcp_servers.')) { return $Line }
+    $m = [regex]::Match($Line, '^(\s*command\s*=\s*)(["''])(.+?)(["''])\s*$')
+    if (-not $m.Success) { return $Line }
+    $value = $m.Groups[3].Value
+    if ($m.Groups[2].Value -eq '"') { $value = $value -replace '\\\\', '\' }
+    if ($value -notmatch '[\\/:]') { return $Line }
+    $leaf = ([IO.Path]::GetFileName($value) -replace '(?i)\.(cmd|exe)$', '')
+    if ([string]::IsNullOrEmpty($leaf)) { return $Line }
+    return "$($m.Groups[1].Value)`"$leaf`""
+}
 $configSrc = Join-Path $HostCodexDir 'config.toml'
-if (-not (Test-Path $configSrc)) {
-    throw "host config.toml missing at $configSrc"
+$outLines = New-Object 'System.Collections.Generic.List[string]'; $section = ''; $skip = $false
+$keptMarketplaces = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+foreach ($line in ([IO.File]::ReadAllText($configSrc) -split "`r?`n")) {
+    $header = [regex]::Match($line, '^\s*\[([^\]]+)\]\s*$')
+    if ($header.Success) {
+        $section = $header.Groups[1].Value.Replace('"','').ToLowerInvariant(); $skip = $section -eq 'windows' -or $section.StartsWith('windows.') -or $section -eq 'projects' -or $section.StartsWith('projects.') -or $section -eq 'marketplaces' -or $section.StartsWith('marketplaces.')
+        if (-not $skip -and $section.StartsWith('plugins.')) { $at = $section.LastIndexOf('@'); if ($at -ge 0) { $marketplace = $section.Substring($at + 1); if ($marketplace -eq 'openai-primary-runtime') { $skip = $true } else { [void]$keptMarketplaces.Add($marketplace) } } }
+        if (-not $skip) { if ($outLines.Count -gt 0 -and $outLines[$outLines.Count - 1] -ne '') { $outLines.Add('') | Out-Null }; $outLines.Add($line) | Out-Null }
+    } elseif (-not $skip) { $outLines.Add((Rewrite-TomlLine $line $section)) | Out-Null }
 }
-
-# Sections (case-insensitive, after stripping all `"` chars) whose entire body
-# must be dropped. Match is by prefix-with-dot-or-exact:
-#   "windows"        matches [windows]
-#   "projects"       matches [projects.<anything>]
-#   "marketplaces"   matches [marketplaces.<anything>]
-# Plugin entries pointing at a dropped marketplace are filtered separately.
-$dropSectionPrefixes = @(
-    'windows',
-    'projects',
-    'marketplaces'
-)
-
-# Plugin marketplaces that no longer exist after [marketplaces.*] drop.
-# Sections like [plugins."documents@openai-primary-runtime"] must be dropped.
-$droppedPluginMarketplaces = @(
-    'openai-primary-runtime'
-)
-
-# Rewrite an mcp_servers.* `command = "..."` line. If the value is a Windows
-# path (contains a drive letter or a backslash), extract the basename and strip
-# .cmd/.exe — leaving the bare binary name (PATH resolution in container).
-# Otherwise pass through unchanged. Args array is never touched.
-function Rewrite-TomlLine([string]$line, [string]$currentSection) {
-    if ([string]::IsNullOrEmpty($line)) { return $line }
-    if (-not $currentSection.StartsWith('mcp_servers.')) { return $line }
-    # Match `command = "..."` (single or double-quoted) optionally indented.
-    $m = [regex]::Match($line, '^(\s*command\s*=\s*)(["''])(.+?)(["''])\s*$')
-    if (-not $m.Success) { return $line }
-    $prefix = $m.Groups[1].Value
-    $openQ  = $m.Groups[2].Value
-    $value  = $m.Groups[3].Value
-    $closeQ = $m.Groups[4].Value
-    # TOML string-literal unescape: doubled-backslash → single. Common in
-    # double-quoted TOML strings on Windows. Single-quoted literals are taken
-    # raw, so the unescape is a no-op there.
-    if ($openQ -eq '"') {
-        $value = $value -replace '\\\\', '\'
-    }
-    # Bare name (no path separators, no drive) → keep as-is.
-    if ($value -notmatch '[\\/:]') {
-        return $line
-    }
-    # Extract filename → strip .cmd / .exe suffix.
-    $leaf = [System.IO.Path]::GetFileName($value)
-    $leaf = $leaf -replace '(?i)\.(cmd|exe)$', ''
-    if ([string]::IsNullOrEmpty($leaf)) { return $line }
-    return "$prefix`"$leaf`""
-}
-
-# Read raw lines (UTF-8 BOM-tolerant via Get-Content -Raw + split).
-$rawText  = [System.IO.File]::ReadAllText($configSrc)
-$rawLines = $rawText -split "`r?`n"
-
-$outLines        = New-Object System.Collections.Generic.List[string]
-$currentSection  = ''  # lowercase, dequoted
-$skipSection     = $false
-$pendingBlank    = $false  # emit blank line before next kept section header
-$keptPluginMarketplaces = New-Object 'System.Collections.Generic.HashSet[string]'
-
-foreach ($lineRaw in $rawLines) {
-    $line = $lineRaw
-
-    # Section header detection. Empty `[]` shouldn't occur but be defensive.
-    $hdr = [regex]::Match($line, '^\s*\[([^\]]+)\]\s*$')
-    if ($hdr.Success) {
-        $rawName = $hdr.Groups[1].Value
-        # Strip ALL `"` characters (not just leading/trailing) so quoted dotted
-        # paths like `plugins."documents@openai-primary-runtime"` compare cleanly.
-        $name = $rawName.Replace('"', '').ToLower()
-        $currentSection = $name
-        $skipSection = $false
-
-        # Drop entire section families: windows / projects / marketplaces.
-        foreach ($dp in $dropSectionPrefixes) {
-            if ($name -eq $dp -or $name.StartsWith("$dp.")) {
-                $skipSection = $true
-                break
-            }
-        }
-
-        # Drop plugin entries whose marketplace was removed.
-        if (-not $skipSection -and $name.StartsWith('plugins.')) {
-            # Plugin section key form: plugins.<plugin-name>@<marketplace>
-            # After dequote, section name looks like: plugins.documents@openai-primary-runtime
-            $tail = $name.Substring('plugins.'.Length)
-            $at = $tail.LastIndexOf('@')
-            if ($at -ge 0) {
-                $mkt = $tail.Substring($at + 1)
-                if ($droppedPluginMarketplaces -contains $mkt) {
-                    $skipSection = $true
-                } else {
-                    [void]$keptPluginMarketplaces.Add($mkt)
-                }
-            }
-        }
-
-        if ($skipSection) {
-            # Don't emit header or any of its body until the next header.
-            continue
-        }
-
-        if ($outLines.Count -gt 0) {
-            if ($outLines[$outLines.Count - 1] -ne '') {
-                $outLines.Add('') | Out-Null
-            }
-        }
-        $outLines.Add($line) | Out-Null
-        $pendingBlank = $false
-        continue
-    }
-
-    if ($skipSection) { continue }
-
-    $rewritten = Rewrite-TomlLine $line $currentSection
-    $outLines.Add($rewritten) | Out-Null
-}
-
-# Trim trailing blank lines for tidy output.
-while ($outLines.Count -gt 0 -and $outLines[$outLines.Count - 1] -eq '') {
-    $outLines.RemoveAt($outLines.Count - 1)
-}
-
-# Codex's `/plugins` and `codex plugin list` do not consider a copied
-# plugins/cache tree installed unless the plugin's marketplace can also be
-# resolved. Host marketplace sections are intentionally dropped above because
-# their sources often point at machine-local `.tmp/` clones, so synthesize
-# image-local marketplace mappings for every kept [plugins."name@marketplace"]
-# section that has staged cache content.
-$imageCodexHome = '/home/agent/.codex'
-$marketplaceSections = New-Object System.Collections.Generic.List[string]
-foreach ($marketplace in @($keptPluginMarketplaces)) {
-    # Browser/chrome bundled plugins are app-runtime payloads and are large
-    # enough to make `codex plugin list` sluggish when exposed as a normal
-    # local marketplace in this plain Docker variant.
+foreach ($marketplace in $keptMarketplaces) {
     if ($marketplace -eq 'openai-bundled') { continue }
-
-    $marketCache = Join-Path $pluginsCacheDst $marketplace
-    if (-not (Test-Path $marketCache)) { continue }
-
-    # Generate a local marketplace under plugins/cache/<marketplace> that
-    # points at already-staged versioned plugin directories. Some upstream
-    # manifests advertise Git/URL sources, which makes `codex plugin list`
-    # slow or network-dependent even though the cache is already baked.
-    $agentsPluginsDir = Join-Path $marketCache '.agents\plugins'
-    New-Item -ItemType Directory -Path $agentsPluginsDir -Force | Out-Null
-
-    $pluginEntries = New-Object System.Collections.Generic.List[object]
-    $pluginDirs = Get-ChildItem -LiteralPath $marketCache -Directory -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -ne '.agents' }
-    foreach ($pluginDir in $pluginDirs) {
-        $versionDirs = Get-ChildItem -LiteralPath $pluginDir.FullName -Directory -Force -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path (Join-Path $_.FullName '.codex-plugin\plugin.json') } |
-            Sort-Object Name -Descending
-        $versionDir = @($versionDirs)[0]
-        if (-not $versionDir) { continue }
-
-        $pluginEntries.Add([ordered]@{
-            name = $pluginDir.Name
-            source = [ordered]@{
-                source = 'local'
-                path = "./$($pluginDir.Name)/$($versionDir.Name)"
-            }
-            policy = [ordered]@{
-                installation = 'AVAILABLE'
-                authentication = 'ON_INSTALL'
-            }
-            category = 'Productivity'
-        }) | Out-Null
+    $marketCache = Join-Path $pluginsDst $marketplace
+    if (-not (Test-Path -LiteralPath $marketCache)) { continue }
+    $manifestDir = Join-Path $marketCache '.agents\plugins'; New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+    $entries = New-Object System.Collections.Generic.List[object]
+    foreach ($plugin in Get-ChildItem -LiteralPath $marketCache -Directory -Force | Where-Object { $_.Name -ne '.agents' }) {
+        $version = Get-ChildItem -LiteralPath $plugin.FullName -Directory -Force | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.codex-plugin\plugin.json') } | Sort-Object Name -Descending | Select-Object -First 1
+        if ($version) { $entries.Add([ordered]@{ name = $plugin.Name; source = [ordered]@{ source = 'local'; path = "./$($plugin.Name)/$($version.Name)" }; policy = [ordered]@{ installation = 'AVAILABLE'; authentication = 'ON_INSTALL' }; category = 'Productivity' }) | Out-Null }
     }
-
-    if ($pluginEntries.Count -eq 0) { continue }
-
-    $marketplaceJson = [ordered]@{
-        name = $marketplace
-        interface = [ordered]@{
-            displayName = $marketplace
-        }
-        plugins = $pluginEntries
-    } | ConvertTo-Json -Depth 10
-    Write-TextNoBom (Join-Path $agentsPluginsDir 'marketplace.json') $marketplaceJson
-
-    $relRoot = $marketCache.Substring($Destination.Length).TrimStart('\','/') -replace '\\','/'
-    $source = "$imageCodexHome/$relRoot"
-
-    $marketplaceSections.Add("") | Out-Null
-    $marketplaceSections.Add("[marketplaces.$marketplace]") | Out-Null
-    $marketplaceSections.Add('last_updated = "1970-01-01T00:00:00Z"') | Out-Null
-    $marketplaceSections.Add('source_type = "local"') | Out-Null
-    $marketplaceSections.Add("source = `"$source`"") | Out-Null
+    if ($entries.Count -gt 0) {
+        Write-TextNoBom (Join-Path $manifestDir 'marketplace.json') (([ordered]@{ name = $marketplace; interface = [ordered]@{ displayName = $marketplace }; plugins = $entries } | ConvertTo-Json -Depth 10))
+        $relative = $marketCache.Substring($Destination.Length).TrimStart('\','/').Replace('\','/')
+        $outLines.Add('') | Out-Null; $outLines.Add("[marketplaces.$marketplace]") | Out-Null; $outLines.Add('last_updated = "1970-01-01T00:00:00Z"') | Out-Null; $outLines.Add('source_type = "local"') | Out-Null; $outLines.Add("source = `"/root/.codex/$relative`"") | Out-Null
+    }
 }
-
-foreach ($line in $marketplaceSections) {
-    $outLines.Add($line) | Out-Null
-}
-
-$configDst = Join-Path $Destination 'config.toml'
-Write-LinesNoBom $configDst $outLines.ToArray()
-Write-Host "[prepare] config.toml rewritten ($($outLines.Count) lines)"
-
-
-Write-Host "[prepare] staged at $Destination"
-Write-Host "[prepare] next: ./build.ps1 -Image codex-custom:v1"
+while ($outLines.Count -gt 0 -and $outLines[$outLines.Count - 1] -eq '') { $outLines.RemoveAt($outLines.Count - 1) }
+Write-LinesNoBom (Join-Path $Destination 'config.toml') $outLines.ToArray()
+Write-Inventory @($Destination, $SkillsDestination)
+Write-Host '[prepare] staged filtered .codex and shared .agents/skills inputs'
+Write-Host '[prepare] next: ./build.ps1 -Image codex-custom:v1'

@@ -1,160 +1,119 @@
-# Custom Codex CLI sandbox template
+# Custom Codex CLI sandbox
 
-Builds a self-contained Codex CLI image from official `node:25-bookworm-slim` with:
+Builds `codex-custom:v1` from `node:25-bookworm-slim` with Codex CLI, Node 25,
+Python 3, CodeGraph, agent-browser, Playwright, and Chromium. The container runs
+as **root**, uses `/root/.codex`, and works in `/workspace`.
 
-- **Codex CLI**, **Node 25**, **Python 3**, **CodeGraph**, **agent-browser**, and **Playwright + Chromium**
-- Host `~/.codex/{config.toml, AGENTS.md, skills/, vendor_imports/skills/, plugins/cache/}` staged with Windows paths rewritten and machine-local sections stripped
-- In-repo `rm-guard` accident protection for `/workspace/.git`; this is not a security boundary because `agent` retains passwordless sudo
+`rm-guard` only prevents common accidental deletion of workspace Git metadata. It
+is not privilege isolation: root plus Codex approval bypass is for a dedicated,
+trusted local sandbox only.
 
-`run.ps1` performs device authentication at startup; credentials are not baked or mounted.
+## Support and prerequisites
 
-## Prerequisites
-
-- **Windows** — build scripts are PowerShell 5.1; Linux/Mac not yet supported
-- **PowerShell 5.1** — `pwsh` (PowerShell Core 7.x) has known encoding differences; use Windows PowerShell
-- **podman** (or docker) — pass `-Engine docker` to use Docker instead
+- **Docker Desktop on Windows** is the sole release-supported engine/platform.
+- **Windows PowerShell 5.1** and `robocopy.exe` are required for preparation.
+- Podman fake-argv behavior may be exercised by maintainers, but Podman is not a
+  supported or documented release path until it has its own live validation row.
+- Staged host inputs are trusted local payloads. Filename filters reduce obvious
+  accidental inclusion; they do not prove arbitrary content is secret-free.
 
 ## Build
 
 ```powershell
-./prepare.ps1                                                # stage host .codex payload
-./build.ps1 -Image codex-custom:v1                           # podman by default
+./build.ps1 -Image codex-custom:v1
 ```
 
-`build.ps1` uses the canonical `Dockerfile` and Podman by default. Pass
-`-Engine docker` to use Docker; no `-Dockerfile` override is required.
-The image lands directly in the engine's local store — `-Tar`/`-Retag`/
-`-LoadToDocker`/`-LoadToPodman` are only for moving it to the *other*
-engine's store (Docker and Podman don't share one) or to another machine.
+`build.ps1` uses Docker and the canonical `Dockerfile` by default. It runs
+`prepare.ps1` unless `-SkipPrepare` is supplied. `-Tar`, `-Retag`,
+`-LoadToDocker`, and `-LoadToPodman` preserve their existing transfer-only
+semantics; the default remains local-only and no image is pushed.
 
-### Optional language features
+Preparation accepts isolated fixture inputs when needed:
 
-This image currently has no optional language features. `-Enable` and `-Disable`
-are accepted for a consistent build interface but reject any selector. Node,
-Python, package tooling, CodeGraph, agent-browser, compilers, and system tools
-are fixed shared requirements.
+```powershell
+./build.ps1 -Image codex-custom:v1 `
+  -HostCodexDir C:\fixture\.codex `
+  -HostAgentsSkillsDir C:\fixture\.agents\skills `
+  -Destination C:\fixture\context\.codex `
+  -SkillsDestination C:\fixture\context\.agents\skills
+```
 
 ## Run
 
-Direct Docker/Podman launch (Windows 10+) — from any project directory:
+From any workspace:
 
 ```powershell
-# image must already be in the engine's local store (build.ps1, or `docker load <tar>`)
-<repo>\codex\run.ps1 -Image codex-custom:v1 -Engine docker
+<repo>\codex\run.ps1 -Image codex-custom:v1
 ```
 
-Mounts the current directory as `/workspace` and launches `codex --dangerously-bypass-approvals-and-sandbox` interactively.
-Authenticate with device auth inside the ephemeral container on each run;
-no host credentials are mounted or persisted by `run.ps1`.
+The launcher binds only the workspace and package caches, opens an interactive
+container at `/workspace`, performs fresh `codex login --device-auth`, then
+starts `codex --dangerously-bypass-approvals-and-sandbox`. It mounts no host
+Codex auth, history, sessions, logs, SQLite state, config, or secret environment
+variables. GPU support remains `-GPU`; timezone mapping remains automatic.
 
-### GPU
+CodeGraph install/index initialization is intentionally non-blocking. A visible
+launcher warning precedes the privileged TUI if either fails.
 
-Pass `-GPU` to expose all host GPUs to the container (`--gpus all`). Docker or
-Podman must already have its GPU runtime configured.
+## Dependency caches
 
-Use from any project dir without retyping the repo path — add to your
-PowerShell profile (`$PROFILE`):
+When a host workspace has `node_modules`, it is masked with
+`codex-nmvol-<workspace-hash>-<lock-hash>`. A changed lockfile selects a fresh
+volume. The Node-25 npm cache is `codex-pm-cache-node25` at `/root/.npm`.
+Root writes new volumes directly; no `sudo`, `chown`, or user namespace remap is
+performed. Legacy `nmvol-*` and `pm-cache` volumes are not automatically
+removed; operators may prune only explicitly selected old volumes.
 
-```powershell
-function codexrun { & "<repo-path>\codex\run.ps1" @args }
+The existing npm/yarn/corepack selection remains unchanged. pnpm still is not
+baked into this image.
+
+## Staged build inputs
+
+`prepare.ps1` writes ignored generated context only:
+
+```text
+codex/
+├── context/.codex/
+│   ├── config.toml
+│   ├── AGENTS.md
+│   ├── skills/
+│   ├── vendor_imports/skills/
+│   ├── plugins/cache/
+│   └── staged-input-inventory.json
+└── context/.agents/skills/
 ```
 
-Then just run `codexrun` from any project directory.
+The filtered Codex input includes `config.toml`, `AGENTS.md`, `skills/`,
+`vendor_imports/skills/`, and `plugins/cache/`; it never whole-tree mirrors
+`~/.codex`. Shared `~/.agents/skills` is mirrored separately. Missing optional
+skill trees create deterministic `.keep` placeholders; missing `AGENTS.md`
+creates Codex's empty stub.
 
+Before mutation, preparation canonicalizes inputs/destinations and rejects roots,
+source/destination ancestry or overlap, generated-envelope escapes, malformed or
+duplicate canonical skills, and reparse traversal. Its marker gates stale cleanup.
+It removes stale `.git`, `.github`, `node_modules`, and credential-pattern files,
+normalizes staged `.sh` CRLF to LF, and records only relative path, SHA-256,
+package name/version, and lifecycle-script-key inventory data. It never prints
+source absolute paths or staged file content.
 
-## Workspace `node_modules` (Windows host)
+Plugin dependency installation uses a no-login `pluginbuild` user with
+`npm install --ignore-scripts`; host-derived lifecycle scripts never receive root
+authority. The image records critical hashes after that phase.
 
-If your project already has a `node_modules/` on the host (Windows), `run.ps1`
-masks it with a per-project Docker volume and installs Linux-native deps inside
-the container on first launch — a Windows `node_modules` carries win32 bundler
-binaries (rollup/esbuild/rolldown) that crash on Linux (`You installed esbuild
-for another platform`, `binding-*.mjs command failed: vite`).
+## Config transformation
 
-- **Shared npm cache** — the npm cache (`pm-cache` volume) is shared across every
-  project and container of this suite. Only the very first install ever pays real
-  network cost; later projects' first installs pull tarballs from the local cache
-  volume, so they are fast. `node_modules` looking empty at the very start of the
-  first masked run is expected (mask, pre-install).
-- **No host `node_modules`?** node_modules behavior is unchanged; the shared npm
-  cache still applies.
-- **Per-project volume** — masked deps persist in a named volume
-  (`nmvol-<hash>`, keyed by workspace path) across `--rm` runs; the second run
-  reuses it with no reinstall.
-- **pnpm** — not baked in this image. Run pnpm projects in the **claude** image
-  (which has pnpm + a shared pnpm store). A `pnpm-lock.yaml` project here triggers
-  a visible `corepack pnpm` error, not a silent failure.
-- **yarn Berry/PnP** — no `node_modules` to mask; masking is a no-op.
-- **Monorepos / nested `node_modules`** — only the top-level dir is masked;
-  reinstall per-package inside the container where needed.
-- **opencode image** — has no Node toolchain; masking/caching are disabled there.
-- **Host IDE** keeps its own host `node_modules` (diverges by design).
+Top-level settings, kept plugin entries, and MCP server entries remain. Windows
+paths in MCP `command` values are reduced to their bare executable name; `args`
+remain unchanged. `[windows]`, `[projects.*]`, host `[marketplaces.*]`, and
+plugins belonging to dropped `openai-primary-runtime` are removed. Non-bundled
+staged plugin marketplaces are regenerated under `/root/.codex/plugins/cache/...`.
 
-Prune the volumes if they accumulate: `docker volume ls -q --filter name=nmvol-`
-(per-project), plus the shared `pm-cache`.
+## Operational boundaries
 
-## Layout
-
-```
-custom_sbx/codex/
-├── Dockerfile
-├── prepare.ps1                       # stages + rewrites host config
-├── build.ps1                         # podman build + export/load
-├── retag-tar.ps1                     # strip localhost/ prefix from saved tar
-├── .dockerignore
-└── context/
-    ├── .codex/                       # generated by prepare.ps1
-    │   ├── config.toml               # rewritten: marketplaces/projects/windows dropped
-    │   ├── AGENTS.md                 # copied as-is (empty stub if absent on host)
-    │   ├── skills/                   # user skills (excluding .system/)
-    │   ├── vendor_imports/skills/    # vendored curated skills (excluding all .git/)
-    │   └── plugins/cache/            # installed plugin bundles (excluding node_modules/)
-    └── scripts/                      # reserved (no codex hooks shipped)
-```
-
-## What `prepare.ps1` does to `config.toml`
-
-| Section | Action |
-|---|---|
-| Top-level keys (`model`, `model_reasoning_effort`, etc.) | Keep |
-| `[plugins."*@openai-bundled"]` | Keep |
-| `[plugins."*@openai-curated"]` | Keep |
-| `[mcp_servers.*]` | Keep, with `command` rewritten Win path → bare binary name |
-| `[windows]` | Drop (Windows Sandbox config — no meaning in Linux container) |
-| `[projects.*]` | Drop (machine-local trust entries) |
-| `[marketplaces.*]` | Drop host entries, then synthesize image-local entries for staged non-bundled plugin cache marketplaces |
-| `[plugins."*@openai-primary-runtime"]` | Drop (their marketplace was dropped — would dangle) |
-
-For installed non-bundled plugins such as `context-mode@context-mode` and
-`ponytail@ponytail`, `prepare.ps1` writes a local marketplace manifest under
-`plugins/cache/<marketplace>/.agents/plugins/marketplace.json` and adds a
-matching `[marketplaces.<marketplace>]` section. Without that mapping,
-`/plugins` reports zero installed plugins even when the cache directories are
-baked into the image.
-
-### MCP `command` rewriting
-
-- Value contains `\` or `:` → take basename, strip `.cmd`/`.exe` → bare name on PATH
-- Value already a bare name → unchanged
-- `args` array is never touched
-
-## What `prepare.ps1` excludes (never staged)
-
-- `auth.json` — credentials; runtime device authentication creates ephemeral container state
-- `sessions/`, `session_index.jsonl`, `logs_*.sqlite*`, `state_*.sqlite*`, `sqlite/` — host session/history state
-- `cache/`, `.tmp/`, `.sandbox/`, `.sandbox-bin/`, `.sandbox-secrets/` — host-only runtime dirs
-- `memories/`, `.codex-global-state.json*`, `models_cache.json`, `installation_id`, `cap_sid`, `.personality_migration` — machine-local state
-- `skills/.system/` — internal system skills, not user content
-- `plugins/data/` and plugin staging dirs — host runtime state
-- `**/.git/`, `**/.github/`, and `**/node_modules/` inside staged skills/vendor/plugins content — recursive, any depth
-- `robocopy` excludes anything matching credential patterns (`*.key`, `*.pem`, `*.token`, `*.credentials`, `secrets.json`, `*.p12`, `*.pfx`, `token.json`, `auth.json`); a post-mirror scan removes any matching file left by an older staged context
-
-## Notes
-
-- `skills/`, `vendor_imports/skills/`, and `plugins/cache/` are seeded with a `.keep` placeholder so BuildKit `COPY` succeeds even when the host dirs are empty or absent.
-- If `AGENTS.md` is absent on the host, an empty stub is written so the Dockerfile `COPY` never fails.
-- Staging is incremental: `robocopy /MIR` compares size + write time and transfers only changes while purging source-removed entries; exit codes below 8 are success.
-- `.projex/closed/` contains completed project documents (design plans, walkthroughs).
-  Active development notes are not committed. See `SECURITY.md` for the responsible
-  disclosure path.
-- Base image tag (`node:25-bookworm-slim`) is mutable; pin to a digest for fully
-  reproducible builds.
+- Device auth and all container runtime state are ephemeral per launch.
+- Browser binaries are baked during image build for offline runtime use.
+- The base image tag and unpinned Codex package remain mutable; pin a base digest
+  and package version if reproducibility is required.
+- Root privilege, trusted staged payloads, and approval bypass require a dedicated
+  local environment. Do not treat this suite as multi-tenant or least-privilege.

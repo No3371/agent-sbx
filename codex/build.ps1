@@ -1,4 +1,4 @@
-# Build the custom Codex CLI sandbox template with podman.
+# Build the custom Codex CLI sandbox template. Docker Desktop is the supported engine.
 #
 # Output modes (pick one):
 #   default          — image stays in the selected engine's local store only
@@ -24,8 +24,10 @@ param(
     [string[]]$Disable,
     [string]$Dockerfile = 'Dockerfile',
     [string]$Engine = 'docker',
-    [string]$HostCodexDir = '',   # passed through to prepare.ps1; default: $env:USERPROFILE\.codex
-    [string]$Destination  = ''    # passed through to prepare.ps1; default: <repo>/context/.codex
+    [string]$HostCodexDir = '',        # passed through to prepare.ps1; default: $env:USERPROFILE\.codex
+    [string]$HostAgentsSkillsDir = '', # passed through to prepare.ps1; default: $env:USERPROFILE\.agents\skills
+    [string]$Destination = '',         # passed through to prepare.ps1; default: <repo>/context/.codex
+    [string]$SkillsDestination = ''    # passed through to prepare.ps1; default: <repo>/context/.agents/skills
 )
 
 $ErrorActionPreference = 'Stop'
@@ -88,7 +90,9 @@ if (-not $SkipPrepare) {
     Write-Host "==> prepare.ps1"
     $prepareArgs = @()
     if ($HostCodexDir) { $prepareArgs += '-HostCodexDir'; $prepareArgs += $HostCodexDir }
-    if ($Destination)  { $prepareArgs += '-Destination';  $prepareArgs += $Destination   }
+    if ($HostAgentsSkillsDir) { $prepareArgs += '-HostAgentsSkillsDir'; $prepareArgs += $HostAgentsSkillsDir }
+    if ($Destination) { $prepareArgs += '-Destination'; $prepareArgs += $Destination }
+    if ($SkillsDestination) { $prepareArgs += '-SkillsDestination'; $prepareArgs += $SkillsDestination }
     & (Join-Path $root 'prepare.ps1') @prepareArgs
 }
 
@@ -137,12 +141,16 @@ Write-Host ""
 Write-Host "Built: $Image"
 if ($Tar)     { Write-Host "Tar:   $Tar" }
 if ($doRetag) { Write-Host "Retag: $oldTag -> $newTag" }
-if ($loadTargets.Count -gt 0) {
+if ($loadTargets -contains 'docker') {
     Write-Host "Loaded into: $($loadTargets -join ', ')"
-    Write-Host "Run:   ./run.ps1 -Image $Image -Engine <docker|podman>"
+    Write-Host "Run:   ./run.ps1 -Image $Image"
+} elseif ($loadTargets.Count -gt 0) {
+    Write-Host "Loaded into: $($loadTargets -join ', ') (transfer only; Docker Desktop is the supported run engine)."
 } elseif ($Tar) {
-    Write-Host "Next:  docker load -i $Tar  OR  podman load -i $Tar"
+    Write-Host "Next:  docker load -i $Tar"
+} elseif ($Engine -eq 'docker') {
+    Write-Host 'Note:  image is only in Docker local storage.'
+    Write-Host '       Re-run with -Tar <path> [-LoadToDocker|-LoadToPodman].'
 } else {
-    Write-Host "Note:  image is only in $Engine's local store."
-    Write-Host "       Re-run with -Tar <path> [-LoadToDocker|-LoadToPodman]."
+    Write-Host "Note:  image is only in $Engine's unverified local store; Docker Desktop is the supported run engine."
 }
