@@ -1,6 +1,6 @@
 # Modernize Codex sandbox suite
 
-> **Status:** Ready
+> **Status:** In Progress
 > **Author:** openai-codex/gpt-5.6-sol (plan-projex)
 > **Source:** Direct request — modernize Codex suite to parity with updated suites, including root runtime and robocopy staging
 > **Related Projex:** 2608030651-codex-incremental-context-staging-patch.md (robocopy baseline) | 2608030706-coding-agent-sandbox-suite-contract-def.md (shared contract; observed state predates recent Pi/OpenCode updates) | 2608030408-c-c-combined-suite-plan.md (downstream; must rebase Codex assumptions) | 2608030409-retire-merged-codex-suite-plan.md (downstream retirement, dependency-gated) | 2608101607-codex-suite-modernization-plan-redteam.md (revision trigger) | 2608101613-codex-suite-modernization-plan-stress.md (revision trigger)
