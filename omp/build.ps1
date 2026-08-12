@@ -11,8 +11,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Image,            # e.g. sbx-omp:v1
+    [string]$Image = "sbx-omp:v1",            # e.g. sbx-omp:v1
 
     [string]$Tar,              # optional path to export tar (e.g. .\sbx-omp.tar)
     [switch]$Retag,            # after Tar export, rewrite localhost/-prefixed manifest tags
