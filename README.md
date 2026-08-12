@@ -17,3 +17,7 @@ Additionally some opinionated tools/plugins are packed: context-mode, agent-brow
 ## Usage
 
 Run `build.ps1|sh` inside the folder for your harness of choice. With the built image in your Docker/Podman store, call `run.ps1|sh` whereever you want to work on; the $pwd would be mounted as `/workspace`. Podman users may need to look into the -Retag parameter.
+
+## Note
+
+The suites contains a `rm-guard` script which shadows `rm` to protect `/workspace/.git`.
