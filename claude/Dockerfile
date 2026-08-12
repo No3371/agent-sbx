@@ -1,6 +1,6 @@
 # Self-built Claude Code image
 #   - Starts from official Node 25 bookworm-slim
-#   - Installs Claude Code, pnpm, and optional Python 3, Go, and .NET SDK
+#   - Installs Claude Code, pnpm, and optional Python 3, Go, .NET SDK, and PowerShell
 #   - Recreates only the agent user/env pieces needed by run.ps1
 #   - Host OAuth is bind-mounted by run.ps1; no credentials are baked
 
@@ -10,9 +10,13 @@ USER root
 
 ARG GO_VERSION=1.26.3
 ARG DOTNET_CHANNEL=10.0
+# packages.microsoft.com's apt versions always carry this literal "-1.deb"
+# packaging suffix (e.g. 7.6.4-1.deb) — appended where the ARG is consumed.
+ARG PWSH_VERSION=7.6.4
 ARG INSTALL_GO=1
 ARG INSTALL_DOTNET=1
 ARG INSTALL_PYTHON=1
+ARG INSTALL_PWSH=1
 
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
     PATH=/usr/local/share/npm-global/bin:/home/agent/.local/bin:$PATH \
@@ -22,19 +26,27 @@ ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
 # Core tools only. Deliberately omits heavyweight extras like Docker CLI,
 # Java, man-db, Ubuntu dev bundles, and clipboard bridge.
 RUN set -eux; \
-    for flag in "$INSTALL_GO" "$INSTALL_DOTNET" "$INSTALL_PYTHON"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
+    for flag in "$INSTALL_GO" "$INSTALL_DOTNET" "$INSTALL_PYTHON" "$INSTALL_PWSH"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         apt-transport-https build-essential ca-certificates curl git gnupg jq less openssh-client \
         procps ripgrep sudo tini tzdata unzip; \
-    if [ "$INSTALL_DOTNET" = "1" ]; then \
+    if [ "$INSTALL_DOTNET" = "1" ] || [ "$INSTALL_PWSH" = "1" ]; then \
         install -d -m 0755 /etc/apt/keyrings; \
         curl -fsSL "https://packages.microsoft.com/config/debian/$(. /etc/os-release && echo "$VERSION_ID")/packages-microsoft-prod.deb" \
             -o /tmp/packages-microsoft-prod.deb; \
         dpkg -i /tmp/packages-microsoft-prod.deb; \
         rm -f /tmp/packages-microsoft-prod.deb; \
         apt-get update; \
+    fi; \
+    if [ "$INSTALL_DOTNET" = "1" ]; then \
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dotnet-sdk-${DOTNET_CHANNEL}; \
+    fi; \
+    if [ "$INSTALL_PWSH" = "1" ]; then \
+        # apt/dpkg verify the repo's GPG-signed metadata directly, and the
+        # powershell package's own Depends pulls in whichever libicu Debian
+        # ships — no manual checksum or ICU pin needed.
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "powershell=${PWSH_VERSION}-1.deb"; \
     fi; \
     if [ "$INSTALL_PYTHON" = "1" ]; then \
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip python3-venv; \

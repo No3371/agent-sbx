@@ -12,11 +12,15 @@ ARG INSTALL_GO=1
 ARG GO_VERSION=1.26.3
 ARG INSTALL_DOTNET=1
 ARG DOTNET_VERSION=10.0
+# packages.microsoft.com's apt versions always carry this literal "-1.deb"
+# packaging suffix (e.g. 7.6.4-1.deb) — appended where the ARG is consumed.
+ARG PWSH_VERSION=7.6.4
+ARG INSTALL_PWSH=1
 
 ARG CONTEXT_MODE_VERSION=1.0.169
 
 RUN set -eux; \
-    for flag in "$INSTALL_GO" "$INSTALL_DOTNET"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
+    for flag in "$INSTALL_GO" "$INSTALL_DOTNET" "$INSTALL_PWSH"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash ca-certificates curl git gnupg jq less openssh-client ripgrep sudo tini tzdata apt-transport-https; \
@@ -78,20 +82,29 @@ apt-get clean; \
 rm -rf /var/lib/apt/lists/*;
 
 ENV PATH="/usr/local/sbin:/usr/sbin:/sbin:${PATH}"
-# Optional Dotnet SDK (apt)
+# Optional .NET SDK and PowerShell — both ship from Microsoft's own apt repo,
+# so registering it once covers both; apt/dpkg verify the repo's GPG-signed
+# metadata directly, and the powershell package's own Depends pulls in
+# whichever libicu Debian ships, so no manual checksum or ICU pin is needed.
 RUN set -eux; \
-    if [ "$INSTALL_DOTNET" = "1" ]; then \
+    if [ "$INSTALL_DOTNET" = "1" ] || [ "$INSTALL_PWSH" = "1" ]; then \
         curl -fsSL \
             https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \
             -o /tmp/packages-microsoft-prod.deb; \
         dpkg -i /tmp/packages-microsoft-prod.deb; \
         rm /tmp/packages-microsoft-prod.deb; \
         apt-get update; \
+    fi; \
+    if [ "$INSTALL_DOTNET" = "1" ]; then \
         apt-get install -y --no-install-recommends \
             "dotnet-sdk-${DOTNET_VERSION}"; \
-        rm -rf /var/lib/apt/lists/*; \
         dotnet --info; \
-    fi
+    fi; \
+    if [ "$INSTALL_PWSH" = "1" ]; then \
+        apt-get install -y --no-install-recommends "powershell=${PWSH_VERSION}-1.deb"; \
+        pwsh --version; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
 
 
 RUN git config --system core.autocrlf input \

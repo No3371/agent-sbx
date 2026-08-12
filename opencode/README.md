@@ -51,12 +51,13 @@ engine's store (Docker and Podman don't share one) or to another machine.
 
 ### Optional language features
 
-Two toolchains toggle on/off; **both are ON by default**:
+Three toolchains toggle on/off; **all three are ON by default**:
 
 | Language | Install | Default |
 |----------|---------|---------|
 | `go`     | official tarball, pinned `GO_VERSION`          | on |
 | `python` | `python3`, `python3-pip`, `python3-venv` (apt) | on |
+| `pwsh`   | `powershell=$PWSH_VERSION-1.deb` (`7.6.4`) via packages.microsoft.com | on |
 
 > **Note on `python`:** the NodeSource `nodejs` package (Node 24) depends on
 > `python3`, so a bare `python3` interpreter is **always present** regardless of
@@ -66,13 +67,13 @@ Two toolchains toggle on/off; **both are ON by default**:
 > removed it entirely — this is a Debian/NodeSource difference.)
 
 ```powershell
-./build.ps1 -Image opencode-custom:v1 -Engine docker              # both on (default)
-./build.ps1 -Image opencode-custom:v1 -Disable python -Engine docker  # go only
+./build.ps1 -Image opencode-custom:v1 -Engine docker              # all three on (default)
+./build.ps1 -Image opencode-custom:v1 -Disable python -Engine docker  # go+pwsh only
 ./build.ps1 -Image opencode-custom:v1 -Enable go -Engine docker       # go only (explicit)
 ```
 
 `-Enable`/`-Disable` are mutually exclusive; an unknown selector is rejected
-(`Unknown language 'dotnet'. Supported: go, python.`). **`.NET` is not yet a
+(`Unknown language 'dotnet'. Supported: go, python, pwsh.`). **`.NET` is not yet a
 toggle** — the prior Alpine base excluded it because musl .NET is niche; on this
 glibc base claude's `dotnet-sdk` apt path would apply directly, so it is now
 feasible (see Notes) but out of scope for this base swap. `node` is **not** a

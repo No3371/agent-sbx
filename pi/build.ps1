@@ -70,7 +70,7 @@ $loadTargets = @()
 if ($LoadToDocker) { $loadTargets += 'docker' }
 if ($LoadToPodman) { $loadTargets += 'podman' }
 if ($loadTargets.Count -gt 0 -and -not $Tar) { throw "-LoadToDocker/-LoadToPodman requires -Tar <path>" }
-$enabledLanguages = Resolve-LanguageSelection -Enable $Enable -Disable $Disable -Supported @('go','python') -EnableSpecified ($PSBoundParameters.ContainsKey('Enable')) -DisableSpecified ($PSBoundParameters.ContainsKey('Disable'))
+$enabledLanguages = Resolve-LanguageSelection -Enable $Enable -Disable $Disable -Supported @('go','python','pwsh') -EnableSpecified ($PSBoundParameters.ContainsKey('Enable')) -DisableSpecified ($PSBoundParameters.ContainsKey('Disable'))
 
 # Single-quote guard only matters when retag-tar.ps1 will be invoked.
 # (retag-tar.ps1 embeds the tar path in a sh heredoc — single-quote injection risk)
@@ -95,7 +95,7 @@ $dockerfilePath = if ([System.IO.Path]::IsPathRooted($Dockerfile)) { $Dockerfile
 if (-not (Test-Path $dockerfilePath)) { throw "Dockerfile not found: $dockerfilePath" }
 
 $buildArgs = @('build', '-t', $Image, '-f', $dockerfilePath)
-foreach ($language in @('go','python')) {
+foreach ($language in @('go','python','pwsh')) {
     $buildArgs += '--build-arg'
     $buildArgs += "INSTALL_$($language.ToUpperInvariant())=$([int]($language -in $enabledLanguages))"
 }

@@ -60,14 +60,19 @@ re-resolving costs one npm install rather than a Chrome/Chromium re-download.
 
 ### Optional language features
 
-Claude selects `go`, `dotnet`, and `python`; all three are installed by default.
+Claude selects `go`, `dotnet`, `python`, and `pwsh`; all four are installed by default.
 Use exactly one selector: `-Enable` is a whitelist and `-Disable` is a blacklist.
 Names are case-insensitive; blank, unknown, or duplicate names fail before preparation or build.
 
 ```powershell
 ./build.ps1 -Image claude-custom:go -Enable go
 ./build.ps1 -Image claude-custom:no-dotnet -Disable dotnet
+./build.ps1 -Image claude-custom:no-pwsh -Disable pwsh
 ```
+
+`pwsh` (PowerShell 7, in-container) installs via `apt` from Microsoft's own
+package repo, pinned to `PWSH_VERSION` (`7.6.4`) — apt/dpkg verify the repo's
+GPG-signed metadata, so no separate checksum step is needed.
 
 Node, pnpm, CodeGraph, agent-browser, compilers, and system tools are shared
 requirements and cannot be selected.

@@ -20,11 +20,15 @@ ARG CONTEXT_MODE_VERSION=1.0.169
 ARG GO_VERSION=1.26.3
 ARG INSTALL_GO=1
 ARG INSTALL_PYTHON=1
+# packages.microsoft.com's apt versions always carry this literal "-1.deb"
+# packaging suffix (e.g. 7.6.4-1.deb) — appended where the ARG is consumed.
+ARG PWSH_VERSION=7.6.4
+ARG INSTALL_PWSH=1
 
 # Install Node 25 through NodeSource and stock npm packages on glibc. Install
 # pnpm directly because Node 25 no longer bundles corepack.
 RUN set -eux; \
-    for flag in "$INSTALL_GO" "$INSTALL_PYTHON"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
+    for flag in "$INSTALL_GO" "$INSTALL_PYTHON" "$INSTALL_PWSH"; do case "$flag" in 0|1) ;; *) echo "INSTALL_* must be 0 or 1" >&2; exit 1 ;; esac; done; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash ca-certificates curl ripgrep git gnupg jq less openssh-client sudo tini tzdata apt-transport-https; \
@@ -74,6 +78,23 @@ RUN set -eux; \
         ln -sf /usr/local/go/bin/go /usr/local/bin/go; \
         ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt; \
         go version; \
+    fi
+
+# Optional PowerShell (pwsh) via Microsoft's official apt repo — apt/dpkg
+# verify the repo's GPG-signed metadata directly, and the powershell
+# package's own Depends pulls in whichever libicu Debian ships, so no manual
+# checksum or ICU pin is needed.
+RUN set -eux; \
+    if [ "$INSTALL_PWSH" = "1" ]; then \
+        curl -fsSL "https://packages.microsoft.com/config/debian/$(. /etc/os-release && echo "$VERSION_ID")/packages-microsoft-prod.deb" \
+            -o /tmp/packages-microsoft-prod.deb; \
+        dpkg -i /tmp/packages-microsoft-prod.deb; \
+        rm -f /tmp/packages-microsoft-prod.deb; \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "powershell=${PWSH_VERSION}-1.deb"; \
+        apt-get clean; \
+        rm -rf /var/lib/apt/lists/*; \
+        pwsh --version; \
     fi
 
 # Optional Python (apt).

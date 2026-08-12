@@ -63,27 +63,28 @@ branch wins. The Dockerfile consumes the result through `ARG OMP_BASE` (default
 
 ### Optional language features
 
-Two toolchains toggle on/off; **both are ON by default**:
+Three toolchains toggle on/off; **all three are ON by default**:
 
 | Language | Install | Default |
 |----------|---------|---------|
 | `go`     | official tarball, pinned `GO_VERSION` (`1.26.3`)   | on |
 | `dotnet` | `dotnet-sdk-$DOTNET_VERSION` (`10.0`) via packages.microsoft.com | on |
+| `pwsh`   | `powershell=$PWSH_VERSION-1.deb` (`7.6.4`) via packages.microsoft.com | on |
 
 ```powershell
-./build.ps1 -Image omp-custom:v1 -Engine docker                     # both on (default)
-./build.ps1 -Image omp-custom:v1 -Disable dotnet -Engine docker     # go only
+./build.ps1 -Image omp-custom:v1 -Engine docker                     # all three on (default)
+./build.ps1 -Image omp-custom:v1 -Disable dotnet -Engine docker     # go+pwsh only
 ./build.ps1 -Image omp-custom:v1 -Enable go -Engine docker          # go only (explicit)
 ```
 
 `-Enable`/`-Disable` are mutually exclusive; an unknown selector is rejected
-(`Unknown language 'python'. Supported: go, dotnet.`). **`python` is not a
+(`Unknown language 'python'. Supported: go, dotnet, pwsh.`). **`python` is not a
 toggle** — `python3`, `python3-pip` and `python3-venv` are installed
 unconditionally. Nor are `node`/`bun`/`pnpm`: they are the agent's own runtime,
 and codegraph, agent-browser and `run.ps1`'s `node_modules` reinstall all lean
-on them. Go is pinned via `GO_VERSION`; the apt-sourced Python and .NET
-packages track their streams and `pnpm@latest` floats, so those can drift
-between rebuilds.
+on them. Go and PowerShell are pinned via `GO_VERSION`/`PWSH_VERSION`; the
+apt-sourced Python and .NET packages track their streams and `pnpm@latest`
+floats, so those can drift between rebuilds.
 
 ### agent-browser and codegraph
 

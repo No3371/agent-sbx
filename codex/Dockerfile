@@ -9,11 +9,14 @@ ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
 ARG CODEGRAPH_VERSION=1.3.0
 ARG AGENT_BROWSER_VERSION=0.31.1
 ARG PLAYWRIGHT_VERSION=1.61.1
+# packages.microsoft.com's apt versions always carry this literal "-1.deb"
+# packaging suffix (e.g. 7.6.4-1.deb) — appended where the ARG is consumed.
+ARG PWSH_VERSION=7.6.4
 
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq less openssh-client procps ripgrep tini tzdata \
+        apt-transport-https ca-certificates curl git jq less openssh-client procps ripgrep tini tzdata \
         python3 build-essential; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
@@ -33,6 +36,23 @@ RUN set -eux; \
 
 RUN agent-browser install --with-deps
 RUN playwright install --with-deps chromium
+
+# PowerShell (pwsh) via Microsoft's official apt repo — apt/dpkg verify the
+# repo's GPG-signed metadata directly, and the powershell package's own
+# Depends pulls in whichever libicu Debian ships, so no manual checksum or
+# ICU pin is needed. Placed after the browser installs so bumping
+# PWSH_VERSION doesn't invalidate those expensive layers.
+RUN set -eux; \
+    install -d -m 0755 /etc/apt/keyrings; \
+    curl -fsSL "https://packages.microsoft.com/config/debian/$(. /etc/os-release && echo "$VERSION_ID")/packages-microsoft-prod.deb" \
+        -o /tmp/packages-microsoft-prod.deb; \
+    dpkg -i /tmp/packages-microsoft-prod.deb; \
+    rm -f /tmp/packages-microsoft-prod.deb; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "powershell=${PWSH_VERSION}-1.deb"; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*; \
+    pwsh --version
 
 RUN git config --system --add safe.directory '*' \
  && git config --system core.autocrlf input \
